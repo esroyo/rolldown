@@ -30,6 +30,11 @@ pub struct RenderedModuleSource {
   pub module_id: ModuleId,
   pub exec_order: u32,
   pub sources: Option<Arc<[Box<dyn Source + Send + Sync>]>>,
+  /// For SystemJS format: hoisted function-declaration exports from this module.
+  /// Each entry is `(export_names, local_canonical_name)`.
+  /// Collected by the finalizer and batched into a single `exports({...})` call
+  /// at the very top of the execute body by `render_system`.
+  pub system_hoisted_exports: Vec<(Vec<oxc_str::CompactStr>, oxc_str::CompactStr)>,
 }
 
 impl RenderedModuleSource {
@@ -39,7 +44,7 @@ impl RenderedModuleSource {
     exec_order: u32,
     sources: Option<Arc<[Box<dyn Source + Send + Sync>]>>,
   ) -> Self {
-    Self { module_idx, module_id, exec_order, sources }
+    Self { module_idx, module_id, exec_order, sources, system_hoisted_exports: vec![] }
   }
 }
 
@@ -61,19 +66,23 @@ impl Generator for EcmaGenerator {
           .map(|m| (m, codegen_ret.expect("should have codegen_ret")))
       })
       .map(|(m, codegen_ret)| {
-        RenderedModuleSource::new(
+        let system_hoisted_exports =
+          ctx.chunk_graph.system_hoisted_exports_by_module.get(&m.idx).cloned().unwrap_or_default();
+        let mut rms = RenderedModuleSource::new(
           m.idx,
           m.id.clone(),
           m.exec_order,
           render_ecma_module(m, ctx.options, codegen_ret),
-        )
+        );
+        rms.system_hoisted_exports = system_hoisted_exports;
+        rms
       })
       .collect::<Vec<_>>();
 
     let rendered_modules: FxHashMap<ModuleId, RenderedModule> = rendered_module_sources
       .iter()
       .map(|rendered_module_source| {
-        let RenderedModuleSource { module_idx, module_id, exec_order, sources } =
+        let RenderedModuleSource { module_idx, module_id, exec_order, sources, .. } =
           rendered_module_source;
         let rendered_exports = ctx.link_output.metas[*module_idx]
           .resolved_exports

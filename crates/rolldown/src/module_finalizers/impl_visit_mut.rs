@@ -843,6 +843,24 @@ impl<'ast> VisitMut<'ast> for ScopeHoistingFinalizer<'_, 'ast> {
         {
           self.keep_name_statement_to_insert.push((insert_position, original_name, new_name));
         }
+
+        // For SystemJS: a plain `function fnOne() {}` that is re-exported from this chunk
+        // (possibly under a different name via `export { fnOne as alias }` in an importing
+        // module) must emit a hoisted `exports("alias", fnOne)` at the top of execute.
+        // This mirrors the handling of `export function foo()` in remove_unused_top_level_stmt
+        // but covers the case where the `export` keyword is on a different statement or module.
+        if matches!(self.ctx.options.format, rolldown_common::OutputFormat::System) {
+          if let Some(func_id) = &decl.id {
+            if let Some(symbol_id) = func_id.symbol_id.get() {
+              let export_names = self.system_export_names_for_symbol(symbol_id);
+              if !export_names.is_empty() {
+                let symbol_ref: rolldown_common::SymbolRef = (self.ctx.idx, symbol_id).into();
+                let canonical_name = self.canonical_name_for(symbol_ref);
+                self.system_hoisted_stmts.push((export_names, canonical_name.into()));
+              }
+            }
+          }
+        }
       }
       ast::Declaration::ClassDeclaration(decl) => {
         // need to insert `keep_names` helper, because `get_transformed_class_decl`

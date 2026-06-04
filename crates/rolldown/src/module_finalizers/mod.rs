@@ -25,7 +25,7 @@ use rolldown_ecmascript_utils::{
 
 mod finalizer_context;
 mod impl_visit_mut;
-pub use finalizer_context::ScopeHoistingFinalizerContext;
+pub use finalizer_context::{FinalizerMutableFields, ScopeHoistingFinalizerContext};
 use oxc_str::{CompactStr, Ident};
 use rolldown_utils::ecmascript::is_validate_identifier_name;
 use rolldown_utils::indexmap::{FxIndexMap, FxIndexSet};
@@ -2098,31 +2098,6 @@ impl<'me, 'ast> ScopeHoistingFinalizer<'me, 'ast> {
               // `export function foo() {}` => `function foo() {}`
               // `export class Foo {}` => `class Foo {}`
 
-              // For SystemJS: collect hoisted exports for function/class declarations.
-              // These are emitted as `exports("fn", fn)` BEFORE the execute body, taking
-              // advantage of JS function hoisting so the binding is defined at that point.
-              if matches!(self.ctx.options.format, OutputFormat::System) {
-                match decl {
-                  ast::Declaration::FunctionDeclaration(func) => {
-                    if let Some(func_id) = &func.id {
-                      if let Some(symbol_id) = func_id.symbol_id.get() {
-                        let export_names = self.system_export_names_for_symbol(symbol_id);
-                        if !export_names.is_empty() {
-                          let symbol_ref: SymbolRef = (self.ctx.idx, symbol_id).into();
-                          let canonical_name = self.canonical_name_for(symbol_ref);
-                          self.system_hoisted_stmts.push((export_names, canonical_name.into()));
-                        }
-                      }
-                    }
-                  }
-                  ast::Declaration::ClassDeclaration(_class) => {
-                    // Class exports go INSIDE execute (after the class decl), not hoisted.
-                    // Handled in the inline class export block below (after program.body.push).
-                  }
-                  _ => {}
-                }
-              }
-
               *decl.span_mut() = named_decl_span;
               top_stmt = ast::Statement::from(decl.take_in(self.alloc));
             } else {
@@ -2196,28 +2171,6 @@ impl<'me, 'ast> ScopeHoistingFinalizer<'me, 'ast> {
         }
       },
     );
-
-    // For SystemJS: prepend hoisted exports (e.g. `exports("fn", fn)`) to the top of the
-    // module body. These are collected while processing `export function` declarations above.
-    // Function hoisting means `fn` is available at the top of execute even before its declaration.
-    if !self.system_hoisted_stmts.is_empty() {
-      let hoisted = std::mem::take(&mut self.system_hoisted_stmts);
-      // Build statements and insert at front of program.body
-      let old_body: Vec<_> = program.body.drain(..).collect();
-      for (export_names, local_name) in hoisted {
-        let ref_expr = Expression::Identifier(
-          self
-            .snippet
-            .builder
-            .alloc_identifier_reference(SPAN, self.snippet.atom(local_name.as_str())),
-        );
-        let exports_call = self.build_exports_call(&export_names, ref_expr);
-        program.body.push(self.snippet.builder.statement_expression(SPAN, exports_call));
-      }
-      for stmt in old_body {
-        program.body.push(stmt);
-      }
-    }
 
     last_import_stmt_idx.unwrap_or(0)
   }
@@ -3023,11 +2976,16 @@ impl<'me, 'ast> ScopeHoistingFinalizer<'me, 'ast> {
     }
   }
 
-  /// For SystemJS format: returns the export name(s) that a local symbol is exported under.
+  /// For SystemJS format: returns the export name(s) that a local symbol is exported under
+  /// at the **chunk** level.
   ///
-  /// Returns an empty slice if the symbol is not exported or if the format is not System.
-  /// Uses `linking_info.resolved_exports` to find which chunk-level export names
-  /// correspond to this module's local symbol.
+  /// Returns an empty vec if the symbol is not exported or if the format is not System.
+  ///
+  /// Uses `chunk.exports_to_other_chunks` (the authoritative chunk-level export map) so that
+  /// re-exports with rename — e.g. `export { default as fnOne } from './lib'` where `lib` is
+  /// bundled in the same chunk — are found correctly.  The old approach walked
+  /// `linking_info.resolved_exports` (module-level), which only knows `"default"` → fnOne_ref,
+  /// not the public name `"fnOne"` that the **chunk** exports.
   ///
   /// Returns a sorted, deduplicated list of export names.
   pub fn system_export_names_for_symbol(&self, symbol_id: SymbolId) -> Vec<CompactStr> {
@@ -3038,17 +2996,21 @@ impl<'me, 'ast> ScopeHoistingFinalizer<'me, 'ast> {
     let local_ref: SymbolRef = (self.ctx.idx, symbol_id).into();
     let canonical_ref = self.ctx.symbol_db.canonical_ref_for(local_ref);
 
-    // Walk all canonical_exports of this chunk (via linking_info.resolved_exports).
-    // These are the exports that will appear in the chunk's exports() calls.
+    // Walk the chunk's authoritative export map, canonicalising each key on the fly.
+    // Keys in `exports_to_other_chunks` are not guaranteed to be canonical — some entries are
+    // inserted with `canonical_ref_for(...)`, others with the raw symbol ref — so we must
+    // canonicalise to ensure we find all names for this symbol, including re-exports with rename
+    // (e.g. `export { default as fnOne } from './lib'` where `lib` is in the same chunk).
     let mut names: Vec<CompactStr> = self
       .ctx
-      .linking_info
-      .resolved_exports
+      .chunk
+      .exports_to_other_chunks
       .iter()
-      .filter_map(|(export_name, resolved_export)| {
-        let resolved_canonical = self.ctx.symbol_db.canonical_ref_for(resolved_export.symbol_ref);
-        if resolved_canonical == canonical_ref { Some(export_name.clone()) } else { None }
+      .filter_map(|(export_ref, alias_list)| {
+        let resolved = self.ctx.symbol_db.canonical_ref_for(*export_ref);
+        if resolved == canonical_ref { Some(alias_list.iter().cloned()) } else { None }
       })
+      .flatten()
       .collect();
 
     names.sort_unstable();

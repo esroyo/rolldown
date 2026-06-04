@@ -413,6 +413,39 @@ pub fn render_system<'code>(
     );
   }
 
+  // For SystemJS: emit a single batched `exports({ fn1: fn1, fn2: fn2 })` before all module
+  // sources when any module has hoisted function-declaration exports.  All functions are
+  // JS-hoisted so their bindings are available at the top of execute even before their
+  // textual declarations.  Batching into one call matches Rollup's output.
+  let all_hoisted: Vec<(String, String)> = {
+    let mut seen: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    for rms in module_sources {
+      for (export_names, local_name) in &rms.system_hoisted_exports {
+        for export_name in export_names {
+          if seen.insert(export_name.to_string()) {
+            pairs.push((export_name.to_string(), local_name.to_string()));
+          }
+        }
+      }
+    }
+    pairs
+  };
+  if !all_hoisted.is_empty() {
+    let exports_call = if all_hoisted.len() == 1 {
+      let (name, local) = &all_hoisted[0];
+      concat_string!("  exports(\"", name, "\", ", local, ");\n")
+    } else {
+      let props = all_hoisted
+        .iter()
+        .map(|(name, local)| concat_string!("\n\t\t", name, ": ", local))
+        .collect::<Vec<_>>()
+        .join(",");
+      concat_string!("  exports({", props, "\n\t});\n")
+    };
+    source_joiner.append_source(exports_call);
+  }
+
   // Module sources go INSIDE the execute function body
   for RenderedModuleSource { sources, .. } in module_sources {
     if let Some(emitted_sources) = sources {

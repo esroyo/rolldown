@@ -1,6 +1,7 @@
 use arcstr::ArcStr;
 use itertools::Itertools;
 use oxc_index::{IndexVec, index_vec};
+use oxc_str::CompactStr;
 use rolldown_common::{
   Chunk, ChunkIdx, ChunkModulesOrderBy, ChunkTable, EcmaViewMeta, ModuleIdx,
   PostChunkOptimizationOperation, RuntimeHelper, SymbolRef,
@@ -32,6 +33,10 @@ pub struct ChunkGraph {
   ///
   /// We use the second approach to avoid the overhead of re-indexing at the cost of some extra memory.
   pub post_chunk_optimization_operations: FxHashMap<ChunkIdx, PostChunkOptimizationOperation>,
+  /// For SystemJS format: hoisted function-declaration exports collected by the finalizer.
+  /// Maps `module_idx → Vec<(export_names, local_canonical_name)>`.
+  /// Consumed by `render_system` to emit a single batched `exports({...})` before module sources.
+  pub system_hoisted_exports_by_module: FxHashMap<ModuleIdx, Vec<(Vec<CompactStr>, CompactStr)>>,
 }
 
 impl ChunkGraph {
@@ -46,6 +51,7 @@ impl ChunkGraph {
       common_chunk_exported_facade_chunk_namespace: FxHashMap::default(),
       common_chunk_preserve_export_names_modules: FxHashMap::default(),
       post_chunk_optimization_operations: FxHashMap::default(),
+      system_hoisted_exports_by_module: FxHashMap::default(),
     }
   }
 

@@ -275,9 +275,16 @@ pub fn render_system<'code>(
     source_joiner.append_source(banner);
   }
 
-  // Compute factory parameters: `exports`, `module`, or both, based on what the chunk uses
+  // Collect deps (internal chunks + externals) in consistent order
+  let deps = collect_deps(ctx);
+
+  // Compute factory parameters: `exports`, `module`, or both, based on what the chunk uses.
+  // `exports` is required when:
+  //   - The chunk has static named exports (get_chunk_export_names_with_ctx), OR
+  //   - The chunk has star re-exports from externals (setter calls `exports(setter)` at runtime)
   let export_names = get_chunk_export_names_with_ctx(ctx);
-  let has_exports = !export_names.is_empty();
+  let has_star_reexport_dep = deps.iter().any(|d| d.is_star_reexport);
+  let has_exports = !export_names.is_empty() || has_star_reexport_dep;
   let uses_module_context = chunk_uses_module_context(ctx);
 
   let factory_params = match (has_exports, uses_module_context) {
@@ -286,9 +293,6 @@ pub fn render_system<'code>(
     (false, true) => "module",
     (false, false) => "",
   };
-
-  // Collect deps (internal chunks + externals) in consistent order
-  let deps = collect_deps(ctx);
 
   // Build the deps string array: ["./dep1.js", "lodash", ...]
   let deps_array_str =

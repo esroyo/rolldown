@@ -6,7 +6,7 @@ source: crates/rolldown_testing/src/integration_test.rs
 ## main.js
 
 ```js
-System.register(["external-lib"], (function() {
+System.register(["external-lib"], (function(exports) {
 	"use strict";
 	var _starExcludes = {
 		__proto__: null,

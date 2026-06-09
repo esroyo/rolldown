@@ -40,20 +40,30 @@ use crate::{
 /// import.meta presence → the finalizer rewrites `import.meta` → `module.meta`.
 /// Either requires the `module` parameter to be in scope.
 fn chunk_uses_module_context(ctx: &GenerateContext<'_>) -> bool {
-  use rolldown_common::{ImportKind, ImportRecordMeta};
+  use rolldown_common::{ImportKind, ImportRecordMeta, StmtInfoMeta};
 
   ctx.chunk.modules.iter().any(|&module_idx| {
     let Some(normal_module) = ctx.link_output.module_table[module_idx].as_normal() else {
       return false;
     };
 
-    // Check for live dynamic imports (not dead, not in code-split-disabled context)
+    // Check for live static dynamic imports (not dead, not in code-split-disabled context)
     let has_dynamic_import = normal_module.import_records.iter().any(|rec| {
       matches!(rec.kind, ImportKind::DynamicImport)
         && !rec.meta.contains(ImportRecordMeta::DeadDynamicImport)
     });
 
     if has_dynamic_import {
+      return true;
+    }
+
+    // Check for non-static dynamic imports like `import(\`./foo-${id}.js\`)`.
+    // These don't produce an import record; the AST scanner sets NonStaticDynamicImport instead.
+    let has_non_static_dynamic_import = ctx.link_output.stmt_infos[module_idx]
+      .iter()
+      .any(|stmt_info| stmt_info.meta.contains(StmtInfoMeta::NonStaticDynamicImport));
+
+    if has_non_static_dynamic_import {
       return true;
     }
 

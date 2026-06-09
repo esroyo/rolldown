@@ -2617,6 +2617,13 @@ impl<'me, 'ast> ScopeHoistingFinalizer<'me, 'ast> {
         *node = self.snippet.promise_resolve_then_call_expr(wrapped);
         return true;
       }
+      // For SystemJS, non-static dynamic imports like `import(\`./foo-${id}.js\`)` must also
+      // be rewritten to `module.import(...)` so the SystemJS runtime handles the load.
+      if matches!(self.ctx.options.format, OutputFormat::System) {
+        let source = expr.source.take_in(self.alloc);
+        *node = self.build_module_import_call(source, expr.span);
+        return true;
+      }
       return false;
     };
 

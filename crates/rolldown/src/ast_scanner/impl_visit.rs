@@ -184,30 +184,31 @@ impl<'me, 'ast: 'me> Visit<'ast> for AstScanner<'me, 'ast> {
   }
 
   fn visit_import_expression(&mut self, expr: &ast::ImportExpression<'ast>) {
+    let is_ignored = self.is_import_expr_ignored_by_comment(expr);
     // If a `ImportExpression` is ignored by `/* @vite-ignore */` comment, we should not treat it as a dynamic import
-    if !self.is_import_expr_ignored_by_comment(expr)
-      && let Some(request) = expr.source.as_static_module_request()
-    {
-      let import_rec_idx = self.add_import_record(
-        request.as_str(),
-        ImportKind::DynamicImport,
-        expr.source.span(),
-        {
-          let mut meta = ImportRecordMeta::empty();
-          meta.set(ImportRecordMeta::IsTopLevel, self.is_root_scope());
-          meta.set(ImportRecordMeta::IsUnspannedImport, expr.source.span().is_empty());
-          meta.set(ImportRecordMeta::InTryCatchBlock, self.in_side_try_catch_block());
-          meta
-        },
-        Some(expr.unstable_address()),
-      );
-      self.init_dynamic_import_binding_usage_info(import_rec_idx);
-      self.result.imports.insert(expr.span, import_rec_idx);
-    } else if matches!(self.immutable_ctx.options.format, OutputFormat::Cjs)
-      && !self.immutable_ctx.options.dynamic_import_in_cjs
-    {
-      // No import record - either @vite-ignore or non-static dynamic import
-      self.current_stmt_info.meta.insert(StmtInfoMeta::NonStaticDynamicImport);
+    if !is_ignored {
+      if let Some(request) = expr.source.as_static_module_request() {
+        let import_rec_idx = self.add_import_record(
+          request.as_str(),
+          ImportKind::DynamicImport,
+          expr.source.span(),
+          {
+            let mut meta = ImportRecordMeta::empty();
+            meta.set(ImportRecordMeta::IsTopLevel, self.is_root_scope());
+            meta.set(ImportRecordMeta::IsUnspannedImport, expr.source.span().is_empty());
+            meta.set(ImportRecordMeta::InTryCatchBlock, self.in_side_try_catch_block());
+            meta
+          },
+          Some(expr.unstable_address()),
+        );
+        self.init_dynamic_import_binding_usage_info(import_rec_idx);
+        self.result.imports.insert(expr.span, import_rec_idx);
+      } else {
+        // Non-static dynamic import (e.g. `import(expr)` or `import(\`./foo-${id}.js\`)`).
+        // No import record is created for these. Flag the statement so downstream passes
+        // (SystemJS module-context detection, CJS __toESM wrapping) can act on it.
+        self.current_stmt_info.meta.insert(StmtInfoMeta::NonStaticDynamicImport);
+      }
     }
     walk::walk_import_expression(self, expr);
   }

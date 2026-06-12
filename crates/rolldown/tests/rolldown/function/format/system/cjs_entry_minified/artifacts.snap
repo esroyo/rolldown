@@ -1,0 +1,10 @@
+---
+source: crates/rolldown_testing/src/integration_test.rs
+---
+# Assets
+
+## main.js
+
+```js
+System.register([],(function(e){"use strict";return{execute:(function(){e(`default`,((e,t)=>()=>(t||(e((t={exports:{}}).exports,t),e=null),t.exports))(((e,t)=>{(function(e,n){typeof t==`object`&&typeof t.exports==`object`?t.exports=n():e.myLib=n()})(typeof window<`u`?window:globalThis,function(){return{answer:42}})}))())})}}));
+```

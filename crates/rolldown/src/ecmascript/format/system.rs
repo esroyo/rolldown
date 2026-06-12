@@ -30,7 +30,9 @@ use crate::{
     format::utils::render_chunk_directives,
   },
   types::generator::GenerateContext,
-  utils::chunk::render_chunk_exports::get_chunk_export_names_with_ctx,
+  utils::chunk::render_chunk_exports::{
+    get_chunk_export_names_with_ctx, render_wrapped_entry_chunk,
+  },
 };
 
 /// Returns `true` if any module in this chunk uses dynamic import or `import.meta`,
@@ -467,6 +469,14 @@ pub fn render_system<'code>(
         source_joiner.append_source(source);
       }
     }
+  }
+
+  // For CJS-wrapped entry chunks with format=system, emit `exports("default", require_xxx())`
+  // inside the execute block.  This both exposes the module value to the SystemJS runtime and
+  // creates a reference to `require_xxx`, preventing the DCE from eliminating the
+  // `/* @__PURE__ */ __commonJSMin(...)` declaration that defines it.
+  if let Some(source) = render_wrapped_entry_chunk(ctx, None) {
+    source_joiner.append_source(source);
   }
 
   // outro after module sources, inside execute

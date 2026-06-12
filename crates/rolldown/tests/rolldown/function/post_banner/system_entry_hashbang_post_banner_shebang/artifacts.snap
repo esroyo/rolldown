@@ -1,0 +1,19 @@
+---
+source: crates/rolldown_testing/src/integration_test.rs
+---
+# Assets
+
+## main.js
+
+```js
+#!/usr/bin/env node
+System.register([], (function() {
+	"use strict";
+	return { execute: (function() {
+		//#region main.js
+		console.log("system entry hashbang");
+		//#endregion
+	}) };
+}));
+
+```

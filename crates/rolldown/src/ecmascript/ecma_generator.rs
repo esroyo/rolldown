@@ -200,8 +200,9 @@ impl Generator for EcmaGenerator {
     let mut warnings = vec![];
 
     // Warn when multiple shebang sources would produce duplicate shebangs in the output.
-    // UMD format silently drops the entry hashbang, so it doesn't count as a shebang source.
-    let entry_has_shebang = hashbang.is_some() && !matches!(ctx.options.format, OutputFormat::Umd);
+    // UMD and System formats silently drop the entry hashbang, so they don't count as a shebang source.
+    let entry_has_shebang =
+      hashbang.is_some() && !matches!(ctx.options.format, OutputFormat::Umd | OutputFormat::System);
     let banner_has_shebang = banner.as_ref().is_some_and(|b| b.starts_with("#!"));
     let post_banner_has_shebang = post_banner.as_ref().is_some_and(|pb| pb.starts_with("#!"));
 

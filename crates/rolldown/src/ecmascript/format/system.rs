@@ -150,7 +150,24 @@ fn collect_deps<'a>(ctx: &'a GenerateContext<'_>) -> Vec<DepEntry<'a>> {
         .map(std::string::ToString::to_string)
         .unwrap_or_else(|| local_name.to_string());
 
-      bindings.push(DepBinding { local_name, module_prop, re_export_as: None });
+      // Look up whether this binding is also re-exported from the current chunk
+      // (e.g. facade entry chunks that forward exports from the real chunk).
+      // This mirrors what the external-module path does below.
+      //
+      // Keys in `render_export_items_index_vec` (which comes from `exports_to_other_chunks`)
+      // may be non-canonical SymbolRefs, while `item.import_ref` is canonical.
+      // We must canonicalize both sides to avoid a lookup miss.
+      let import_canonical = ctx.link_output.symbol_db.canonical_ref_for(item.import_ref);
+      let re_export_as =
+        ctx.render_export_items_index_vec[ctx.chunk_idx].iter().find_map(|(export_ref, names)| {
+          let resolved = ctx.link_output.symbol_db.canonical_ref_for(*export_ref);
+          if resolved == import_canonical {
+            names.first().map(std::string::ToString::to_string)
+          } else {
+            None
+          }
+        });
+      bindings.push(DepBinding { local_name, module_prop, re_export_as });
     }
 
     let is_side_effect_only = bindings.is_empty();

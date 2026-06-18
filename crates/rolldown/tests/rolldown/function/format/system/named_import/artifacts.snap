@@ -1,0 +1,21 @@
+---
+source: crates/rolldown_testing/src/integration_test.rs
+---
+# Assets
+
+## main.js
+
+```js
+System.register(["dep"], (function(exports) {
+	"use strict";
+	var foo;
+	return {
+		setters: [function(module) {
+			foo = module.foo;
+			exports("foo", foo);
+		}],
+		execute: (function() {})
+	};
+}));
+
+```

@@ -1,0 +1,17 @@
+---
+source: crates/rolldown_testing/src/integration_test.rs
+---
+# Assets
+
+## main.js
+
+```js
+System.register(["./side-effect.js"], (function() {
+	"use strict";
+	return {
+		setters: [null],
+		execute: (function() {})
+	};
+}));
+
+```

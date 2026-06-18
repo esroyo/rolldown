@@ -593,6 +593,12 @@
               "type": "null"
             }
           ]
+        },
+        "systemNullSetters": {
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "additionalProperties": false
@@ -636,7 +642,8 @@
         "esm",
         "cjs",
         "iife",
-        "umd"
+        "umd",
+        "system"
       ]
     },
     "OutputExports": {

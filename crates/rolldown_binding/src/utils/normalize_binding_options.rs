@@ -375,10 +375,11 @@ pub fn normalize_binding_options(
           "cjs" => OutputFormat::Cjs,
           "iife" => OutputFormat::Iife,
           "umd" => OutputFormat::Umd,
+          "system" => OutputFormat::System,
           _ => {
             return Err(napi::Error::new(
               napi::Status::InvalidArg,
-              format!("Invalid value \"{format_str}\" for option \"output.format\" - valid values are \"es\", \"cjs\", \"iife\", and \"umd\"."),
+              format!("Invalid value \"{format_str}\" for option \"output.format\" - valid values are \"es\", \"cjs\", \"iife\", \"umd\", and \"system\"."),
             ));
           }
         })
@@ -580,6 +581,7 @@ pub fn normalize_binding_options(
       })
       .transpose()?,
     context: input_options.context,
+    system_null_setters: output_options.system_null_setters,
     tsconfig: input_options.tsconfig.map(|v| match v {
       Either::A(v) => TsConfig::Auto(v),
       Either::B(s) => TsConfig::Manual(s.into()),

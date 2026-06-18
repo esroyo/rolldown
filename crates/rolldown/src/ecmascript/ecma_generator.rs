@@ -19,7 +19,9 @@ use rolldown_utils::rayon::{IntoParallelRefIterator, ParallelIterator};
 use rustc_hash::FxHashMap;
 
 use super::format::utils::is_use_strict_directive;
-use super::format::{cjs::render_cjs, esm::render_esm, iife::render_iife, umd::render_umd};
+use super::format::{
+  cjs::render_cjs, esm::render_esm, iife::render_iife, system::render_system, umd::render_umd,
+};
 
 pub type RenderedModuleSources = Vec<RenderedModuleSource>;
 
@@ -28,6 +30,11 @@ pub struct RenderedModuleSource {
   pub module_id: ModuleId,
   pub exec_order: u32,
   pub sources: Option<Arc<[Box<dyn Source + Send + Sync>]>>,
+  /// For SystemJS format: hoisted function-declaration exports from this module.
+  /// Each entry is `(export_names, local_canonical_name)`.
+  /// Collected by the finalizer and batched into a single `exports({...})` call
+  /// at the very top of the execute body by `render_system`.
+  pub system_hoisted_exports: Vec<(Vec<oxc_str::CompactStr>, oxc_str::CompactStr)>,
 }
 
 impl RenderedModuleSource {
@@ -37,7 +44,7 @@ impl RenderedModuleSource {
     exec_order: u32,
     sources: Option<Arc<[Box<dyn Source + Send + Sync>]>>,
   ) -> Self {
-    Self { module_idx, module_id, exec_order, sources }
+    Self { module_idx, module_id, exec_order, sources, system_hoisted_exports: vec![] }
   }
 }
 
@@ -59,19 +66,23 @@ impl Generator for EcmaGenerator {
           .map(|m| (m, codegen_ret.expect("should have codegen_ret")))
       })
       .map(|(m, codegen_ret)| {
-        RenderedModuleSource::new(
+        let system_hoisted_exports =
+          ctx.chunk_graph.system_hoisted_exports_by_module.get(&m.idx).cloned().unwrap_or_default();
+        let mut rms = RenderedModuleSource::new(
           m.idx,
           m.id.clone(),
           m.exec_order,
           render_ecma_module(m, ctx.options, codegen_ret),
-        )
+        );
+        rms.system_hoisted_exports = system_hoisted_exports;
+        rms
       })
       .collect::<Vec<_>>();
 
     let rendered_modules: FxHashMap<ModuleId, RenderedModule> = rendered_module_sources
       .iter()
       .map(|rendered_module_source| {
-        let RenderedModuleSource { module_idx, module_id, exec_order, sources } =
+        let RenderedModuleSource { module_idx, module_id, exec_order, sources, .. } =
           rendered_module_source;
         let rendered_exports = ctx.link_output.metas[*module_idx]
           .resolved_exports
@@ -189,8 +200,9 @@ impl Generator for EcmaGenerator {
     let mut warnings = vec![];
 
     // Warn when multiple shebang sources would produce duplicate shebangs in the output.
-    // UMD format silently drops the entry hashbang, so it doesn't count as a shebang source.
-    let entry_has_shebang = hashbang.is_some() && !matches!(ctx.options.format, OutputFormat::Umd);
+    // UMD and System formats silently drop the entry hashbang, so they don't count as a shebang source.
+    let entry_has_shebang =
+      hashbang.is_some() && !matches!(ctx.options.format, OutputFormat::Umd | OutputFormat::System);
     let banner_has_shebang = banner.as_ref().is_some_and(|b| b.starts_with("#!"));
     let post_banner_has_shebang = post_banner.as_ref().is_some_and(|pb| pb.starts_with("#!"));
 
@@ -248,6 +260,7 @@ impl Generator for EcmaGenerator {
           Err(errors) => return Ok(Err(errors)),
         }
       }
+      OutputFormat::System => render_system(ctx, addon_render_context, &rendered_module_sources),
     };
 
     if ctx.options.experimental.is_attach_debug_info_full() && !ctx.chunk.debug_info.is_empty() {

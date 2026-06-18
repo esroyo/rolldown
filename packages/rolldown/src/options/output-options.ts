@@ -51,7 +51,7 @@ export interface GeneratedCodeOptions {
 }
 
 /** @inline */
-export type ModuleFormat = 'es' | 'cjs' | 'esm' | 'module' | 'commonjs' | 'iife' | 'umd';
+export type ModuleFormat = 'es' | 'cjs' | 'esm' | 'module' | 'commonjs' | 'iife' | 'umd' | 'system';
 
 /** @inline */
 export type AddonFunction = (chunk: RenderedChunk) => string | Promise<string>;
@@ -164,6 +164,7 @@ export interface OutputOptions {
    * - `'cjs'` and `'commonjs'` are the same format, all stand for CommonJS module.
    * - `'iife'` stands for [Immediately Invoked Function Expression](https://developer.mozilla.org/en-US/docs/Glossary/IIFE).
    * - `'umd'` stands for [Universal Module Definition](https://github.com/umdjs/umd).
+   * - `'system'` stands for [SystemJS](https://github.com/systemjs/systemjs) module format.
    *
    * @default 'es'
    *
@@ -741,6 +742,13 @@ export interface OutputOptions {
    * @default 'auto'
    */
   strict?: boolean | 'auto';
+  /**
+   * When `true` (default), side-effect-only imports in SystemJS output use `null` setters
+   * instead of empty `function(){}` setters, saving bytes. Only affects `format: 'system'`.
+   *
+   * @default true
+   */
+  systemNullSetters?: boolean;
 }
 
 /**

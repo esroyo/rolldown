@@ -47,8 +47,12 @@ impl LinkStage<'_> {
           if stmt_info.meta.contains(StmtInfoMeta::HasDummyRecord) {
             depended_runtime_helper_map.push(RuntimeHelper::Require, stmt_info_idx);
           }
-          // Handle non-static dynamic imports like `import(foo)` or `import('a' + 'b')`
-          if stmt_info.meta.intersects(StmtInfoMeta::NonStaticDynamicImport) {
+          // Handle non-static dynamic imports like `import(foo)` or `import('a' + 'b')`.
+          // In CJS output these are rewritten to `Promise.resolve().then(() => __toESM(require(expr)))`,
+          // so `__toESM` is needed. Other formats (e.g. SystemJS) handle them differently.
+          if stmt_info.meta.intersects(StmtInfoMeta::NonStaticDynamicImport)
+            && matches!(self.options.format, OutputFormat::Cjs)
+          {
             depended_runtime_helper_map.push(RuntimeHelper::ToEsm, stmt_info_idx);
           }
           stmt_info.import_records.iter().for_each(|rec_id| {
@@ -238,7 +242,10 @@ impl LinkStage<'_> {
                         ExportsKind::CommonJs => {
                           // `import('./some-cjs-module.js')` would be converted to
                           // `import('./some-cjs-module.js').then((m) => __toESM(m.default, isNodeMode))`
-                          depended_runtime_helper_map.push(RuntimeHelper::ToEsm, stmt_info_idx);
+                          // SystemJS handles dynamic imports via module.import() — no __toESM needed.
+                          if !matches!(self.options.format, OutputFormat::System) {
+                            depended_runtime_helper_map.push(RuntimeHelper::ToEsm, stmt_info_idx);
+                          }
                         }
                         ExportsKind::Esm | ExportsKind::None => {}
                       }

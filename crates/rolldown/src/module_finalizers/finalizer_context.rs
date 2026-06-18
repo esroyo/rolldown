@@ -1,12 +1,20 @@
+use oxc_str::CompactStr;
 use rolldown_common::{
   AstScopes, Chunk, ChunkIdx, ConstExportMeta, ImportRecordIdx, IndexModules, ModuleIdx,
   ModuleType, NormalModule, PathsOutputOption, RenderedConcatenatedModuleParts, RuntimeModuleBrief,
   SharedFileEmitter, StmtInfos, SymbolRef, SymbolRefDb, UsedSymbolRefs,
 };
 
+/// Fields returned by the module finalizer after visiting.
+/// - `0`: transferred_import_record
+/// - `1`: rendered_concatenated_wrapped_module_parts
+/// - `2`: For SystemJS format: `(export_names, local_canonical_name)` pairs for hoisted
+///   function-declaration exports. Returned to the renderer so they can be batched into
+///   a single `exports({...})` call at the top of execute.
 pub type FinalizerMutableFields = (
-  FxIndexMap<ImportRecordIdx, String>, // transferred_import_record
-  RenderedConcatenatedModuleParts,     // rendered_concatenated_wrapped_module_parts
+  FxIndexMap<ImportRecordIdx, String>,
+  RenderedConcatenatedModuleParts,
+  Vec<(Vec<CompactStr>, CompactStr)>,
 );
 
 use oxc::ast_visit::VisitMut as _;
@@ -90,9 +98,15 @@ impl<'me> ScopeHoistingFinalizerContext<'me> {
         transferred_import_record,
         rendered_concatenated_wrapped_module_parts: RenderedConcatenatedModuleParts::default(),
         json_module_inlined_prop: need_inline_json_prop.then(|| Box::new(FxHashMap::default())),
+        system_hoisted_stmts: vec![],
+        system_inline_export_stmts: vec![], // Vec<(pos, Vec<(export_names, local_name)>)>
       };
       finalizer.visit_program(oxc_program);
-      (finalizer.transferred_import_record, finalizer.rendered_concatenated_wrapped_module_parts)
+      (
+        finalizer.transferred_import_record,
+        finalizer.rendered_concatenated_wrapped_module_parts,
+        finalizer.system_hoisted_stmts,
+      )
     })
   }
 }

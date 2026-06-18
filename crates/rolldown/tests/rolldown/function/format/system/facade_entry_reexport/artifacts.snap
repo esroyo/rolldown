@@ -1,0 +1,72 @@
+---
+source: crates/rolldown_testing/src/integration_test.rs
+---
+# warnings
+
+## MIXED_EXPORTS
+
+```text
+[MIXED_EXPORTS] Entry module "main.js" is using named (including "default", "v") and default exports together. Consumers of your bundle will have to use `chunk.default` to access the default export, which may not be what you want. Use `output.exports: "named"` to disable this warning.
+
+```
+
+# Assets
+
+## lazy.js
+
+```js
+System.register(["./main2.js"], (function(exports) {
+	"use strict";
+	var v;
+	return {
+		setters: [function(module) {
+			v = module.v;
+		}],
+		execute: (function() {
+			exports("greet", greet);
+			//#region lazy.js
+			function greet() {
+				return `v=${v}`;
+			}
+			//#endregion
+		})
+	};
+}));
+
+```
+
+## main.js
+
+```js
+System.register(["./main2.js"], (function(exports) {
+	"use strict";
+	var mod;
+	var v;
+	return {
+		setters: [function(module) {
+			mod = module.mod;
+			exports("default", mod);
+			v = module.v;
+			exports("v", v);
+		}],
+		execute: (function() {})
+	};
+}));
+
+```
+
+## main2.js
+
+```js
+System.register([], (function(exports, module) {
+	"use strict";
+	return { execute: (function() {
+		exports("mod", {
+			v: exports("v", "1.0.0"),
+			loadLazy: () => module.import("./lazy.js")
+		});
+		//#endregion
+	}) };
+}));
+
+```

@@ -72,6 +72,10 @@ pub fn render_wrapped_entry_chunk(
               Some(concat_string!("return ", wrapper_ref_name, "();\n"))
             }
           }
+          // SystemJS: expose CJS wrapper result as the default export via exports()
+          OutputFormat::System => {
+            Some(concat_string!("exports(\"default\", ", wrapper_ref_name.as_str(), "());\n"))
+          }
         }
       }
       WrapKind::None => None,
@@ -291,6 +295,8 @@ pub fn render_chunk_exports(
       }
       Some(s)
     }
+    // SystemJS handles all exports inline via exports() calls — no postamble needed
+    OutputFormat::System => None,
   }
 }
 

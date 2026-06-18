@@ -2,8 +2,8 @@ module.exports = [
     // Passed, but the output snapshot is different from rollup
     "rollup@form@make-absolute-externals-relative@make-relative-false: does not normalize external paths when set to false",
     "rollup@function@transform-without-code: allows using the transform hook for annotations only without returning a code property and breaking sourcemaps",
-    "rollup@form@catch-parameter-shadowing: the parameter of a catch block should correctly shadow an import (#1391)",// rollup not deconflict
-    "rollup@form@body-less-for-loops: supports body-less for loops",// rollup not deconflict
+    "rollup@form@catch-parameter-shadowing: the parameter of a catch block should correctly shadow an import (#1391)", // rollup not deconflict
+    "rollup@form@body-less-for-loops: supports body-less for loops", // rollup not deconflict
     "rollup@form@import-specifier-deshadowing: deshadows aliased import bindings@generates es", // rollup not deconflict
     "rollup@form@dynamic-import-inlining: dynamic import inlining",
     "rollup@form@dynamic-import-inlining-array: supports an array with a single entry when inlining dynamic imports",
@@ -22,11 +22,11 @@ module.exports = [
     "rollup@form@base64-deshadow: base64 deshadowing indices",
     "rollup@form@big-int: supports bigint",
     "rollup@form@conflicting-imports: ensures bundle imports are deconflicted (#659)@generates es",
-    "rollup@form@deconflict-format-specific-exports: only deconflict \"exports\" for formats where it is necessary@generates es",// avoid unnecessary deconflict
+    'rollup@form@deconflict-format-specific-exports: only deconflict "exports" for formats where it is necessary@generates es', // avoid unnecessary deconflict
     "rollup@form@deconflict-format-specific-globals: deconflicts format specific globals@generates es",
     "rollup@form@default-export-anonymous-class-extends: handles default exported classes extending a regular expression argument (#4783)",
     "rollup@form@default-export-class: puts the export after the declaration for default exported classes in SystemJS@generates es",
-    "rollup@form@default-export-mode: allows specifying the export mode to be \"default\"@generates es",
+    'rollup@form@default-export-mode: allows specifying the export mode to be "default"@generates es',
     "rollup@form@comment-start-inside-comment: properly remove comments above import statements@generates es",
     "rollup@form@effect-in-for-of-loop-in-functions: includes effects in for-of loop (#870)@generates es",
     "rollup@form@exponentiation-operator: folds exponentiation operator when considering dead code@generates es",
@@ -103,7 +103,6 @@ module.exports = [
     "rollup@form@reexport-external-namespace: re-exports * from external module (#791)@generates es",
     "rollup@form@reexport-used-external-namespace-as: reexport external namespace as name if the namespace is also used@generates es",
     "rollup@form@reserved-keywords-in-imports-exports: correctly handles reserved keywords in exports/imports@generates es",
-    "rollup@form@top-level-await: top-level await support@generates system",
     "rollup@form@undefined-default-export: handles default exporting undefined",
     "rollup@form@unmodified-default-exports-function-argument: passing unbound default export to function cannot rebind it",
     "rollup@form@yield-expression@missing-space: Inserts space when simplifying yield expression without space",
@@ -130,12 +129,12 @@ module.exports = [
 
     // Test is passed. Class related, `class A` -> `var A = class`
     "rollup@form@use-class-name-in-static-block: use the original class name instead of renderName in class body@generates es",
-    "rollup@form@static-method-deoptimization: avoids infinite recursions when deoptimizing \"this\" context",
+    'rollup@form@static-method-deoptimization: avoids infinite recursions when deoptimizing "this" context',
     "rollup@form@reassigned-exported-functions-and-classes: use legal names for exported functions and classed (#1943)@generates es",
     "rollup@form@computed-properties: computed property keys include declarations of referenced identifiers@generates es",
     "rollup@form@dedupes-external-imports: dedupes external imports@generates es",
-    "rollup@form@dynamic-import-this-arrow: uses correct \"this\" in dynamic imports when using arrow functions@generates es",
-    "rollup@form@dynamic-import-this-function: uses correct \"this\" in dynamic imports when not using arrow functions@generates es",
+    'rollup@form@dynamic-import-this-arrow: uses correct "this" in dynamic imports when using arrow functions@generates es',
+    'rollup@form@dynamic-import-this-function: uses correct "this" in dynamic imports when not using arrow functions@generates es',
     "rollup@form@empty-statament-class-member: Do not crash if class body has empty statements@generates es",
     "rollup@form@exported-class-declaration-conflict: handles exporting class declarations with name conflicts in SystemJS@generates es",
     "rollup@form@external-empty-import-no-global: does not expect a global to be provided for empty imports (#1217)@generates es",
@@ -146,7 +145,7 @@ module.exports = [
     "rollup@form@support-decorators-before-export: support decorators before export",
 
     // Passed. `undefined` -> `void 0`
-    "rollup@form@proper-this-context: make sure \"this\" respects the context for arrow functions",
+    'rollup@form@proper-this-context: make sure "this" respects the context for arrow functions',
     "rollup@form@this-is-undefined: top-level `this` expression is rewritten as `undefined`@generates es",
 
     // Passed, but sourcemap/code is different from rollup
@@ -157,9 +156,9 @@ module.exports = [
     "rollup@form@sourcemaps-excludesources: correct sourcemaps are written (excluding sourceContent)@generates es", // the mapping is not same as rollup
     "rollup@sourcemaps@render-chunk-babili: generates valid sourcemap when source could not be determined@generates es", // The rolldown output chunk including `module comment` caused line offset, the rollup provider the fake sourcemap can't remapping.
     "rollup@form@render-chunk-plugin-sourcemaps: supports returning undefined source maps from render chunk hooks, when source maps are enabled@generates es", // the mappping is not same as rollup, the `sources/sourcesContent` perseved original sourcemap is correct
-    "rollup@sourcemaps@transform-low-resolution: handles combining low-resolution and high-resolution source-maps when transforming@generates es",// the input string `'bar'`, the rolldown output `"bar"`, caused search original position failed
+    "rollup@sourcemaps@transform-low-resolution: handles combining low-resolution and high-resolution source-maps when transforming@generates es", // the input string `'bar'`, the rolldown output `"bar"`, caused search original position failed
     "rollup@sourcemaps@names: names are recovered (https://github.com/rollup/rollup/issues/101)@generates es", // the inputs string `Object.create( Bar.prototype )`, the rolldown output `Object.create(Bar.prototype)`, caused search original position failed
-    "rollup@sourcemaps@basic-support: basic sourcemap support@generates es",// the inputs string `console.log( 'hello from main.js' )`, the rolldown output `console.log("hello from main.js")`, caused search original position failed
+    "rollup@sourcemaps@basic-support: basic sourcemap support@generates es", // the inputs string `console.log( 'hello from main.js' )`, the rolldown output `console.log("hello from main.js")`, caused search original position failed
 
     // passed, the rolldown give a specific warning
     "rollup@function@preload-loading-module: waits for pre-loaded modules that are currently loading",
@@ -173,4 +172,23 @@ module.exports = [
     "rollup@function@emit-chunk-hash: gives access to the hashed filed name via this.getFileName in generateBundle", // hash value difference
     "rollup@form@emit-asset-file: supports emitting assets from plugin hooks@generates es", // hash value difference
     "rollup@function@cycles-export-star: does not stack overflow on `export * from X` cycles",
-]
+    // SystemJS: DCE removes local var bindings for exported symbols when they are only written
+    // (never read locally). The runtime still receives correct export values via exports() calls.
+    "rollup@form@system-comments: Correctly places leading comments when rendering system bindings",
+    "rollup@form@system-default-comments: Correctly places leading comments when rendering system default exports",
+    "rollup@form@system-export-declarations: Renders declarations where some variables are exported",
+    "rollup@form@system-multiple-export-bindings: supports multiple live bindings for the same symbol in systemJS",
+    "rollup@form@system-semicolon: supports asi in system binding output",
+    "rollup@form@modify-export-semi: inserts semicolons correctly when modifying SystemJS exports@generates system",
+    // system-module-reserved: separate var declarations instead of combined; ES format keeps original name
+    "rollup@form@system-module-reserved: does not output reserved system format identifiers@generates system",
+    "rollup@form@system-module-reserved: does not output reserved system format identifiers@generates es",
+    // system-reexports: dep order differs (star exports after named imports), separate var decls
+    "rollup@form@system-reexports: merges reexports in systemjs",
+    // system-export-destructuring-declaration: DCE splits multi-declarators; behavior is correct
+    "rollup@form@system-export-destructuring-declaration: supports destructuring declarations for systemJS",
+    // system-export-rendering: DCE removes var bindings for write-only exported symbols; behavior correct
+    "rollup@form@system-export-rendering: Renders updates of exported variables for SystemJS output",
+    // ns-external-star-reexport: _mergeNamespaces emitted correctly; minor structural differences
+    "rollup@form@ns-external-star-reexport: supports namespaces with external star reexports@generates system",
+];

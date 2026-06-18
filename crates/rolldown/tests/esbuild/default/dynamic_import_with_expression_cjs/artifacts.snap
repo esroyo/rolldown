@@ -6,6 +6,7 @@ source: crates/rolldown_testing/src/integration_test.rs
 ## a.js
 
 ```js
+//#endregion
 //#region a.js
 import("foo");
 import(foo());

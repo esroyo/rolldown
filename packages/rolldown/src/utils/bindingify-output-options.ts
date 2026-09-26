@@ -65,6 +65,7 @@ export function bindingifyOutputOptions(
     topLevelVar,
     cleanDir,
     strictExecutionOrder,
+    systemNullSetters,
   } = outputOptions;
 
   if (legalComments != null) {
@@ -160,6 +161,7 @@ export function bindingifyOutputOptions(
     cleanDir,
     strictExecutionOrder,
     strict: outputOptions.strict,
+    systemNullSetters,
   };
 }
 
@@ -199,6 +201,9 @@ function bindingifyFormat(format: OutputOptions['format']): BindingOutputOptions
     }
     case 'umd': {
       return 'umd';
+    }
+    case 'system': {
+      return 'system';
     }
     default:
       unimplemented(`output.format: ${format}`);

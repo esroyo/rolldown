@@ -1,0 +1,15 @@
+{
+  "_comment": "Regression: a pure-ESM shared chunk spuriously imports the runtime chunk. shared.js has a side-effect-only import of barrel.js; barrel.js is side-effect-free (eliminated) but has depended_runtime_helper=ToEsm because it does `import cjsDep from './cjs-dep.js'`. patch_module_dependencies propagates ToEsm from the eliminated barrel onto shared.js. compute_cross_chunk_links then adds __toESM to the shared chunk's depended_symbols, producing a spurious rolldown-runtime dep with a dead setter. Both entries directly import cjs-dep.js, keeping the runtime as a separate chunk. The fix guards the chunk.depended_runtime_helper loop in compute_cross_chunk_links to skip helpers not needed by any included module in the chunk.",
+  "config": {
+    "format": "system",
+    "input": [
+      { "name": "entry-a", "import": "./entry-a.js" },
+      { "name": "entry-b", "import": "./entry-b.js" }
+    ],
+    "treeshake": {
+      "moduleSideEffects": false
+    }
+  },
+  "expectExecuted": false,
+  "hiddenRuntimeModule": false
+}

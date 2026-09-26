@@ -1,0 +1,17 @@
+---
+source: crates/rolldown_testing/src/integration_test.rs
+---
+# Assets
+
+## main.js
+
+```js
+System.register([], (function(exports) {
+	return { execute: (function() {
+		//#region main.js
+		exports("x", 1);
+		//#endregion
+	}) };
+}));
+
+```

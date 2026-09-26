@@ -1,0 +1,12 @@
+{
+  "config": {
+    "format": "system",
+    "input": [
+      { "name": "entry1", "import": "./entry1.js" },
+      { "name": "entry2", "import": "./entry2.js" }
+    ],
+    "preserveModules": true
+  },
+  "expectExecuted": false,
+  "hiddenRuntimeModule": false
+}

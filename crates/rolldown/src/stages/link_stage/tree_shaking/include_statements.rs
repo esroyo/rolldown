@@ -430,6 +430,10 @@ impl LinkStage<'_> {
           );
         }
         meta.depended_runtime_helper = normalized_runtime_helper;
+        // Snapshot the pre-patch value so the code-splitter can use only
+        // bits demanded by this module's own included statements (excluding
+        // bits that `patch_module_dependencies` will add from eliminated deps).
+        meta.own_depended_runtime_helper = normalized_runtime_helper;
         meta.module_namespace_included_reason = module_namespace_included_reason[module.idx];
       });
 

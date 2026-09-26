@@ -117,7 +117,7 @@ impl BindingNormalizedOptions {
     self.inner.file.as_deref()
   }
 
-  #[napi(getter, ts_return_type = "'es' | 'cjs' | 'iife' | 'umd'")]
+  #[napi(getter, ts_return_type = "'es' | 'cjs' | 'iife' | 'umd' | 'system'")]
   pub fn format(&self) -> &'static str {
     self.inner.format.as_str()
   }

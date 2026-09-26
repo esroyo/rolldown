@@ -47,6 +47,10 @@ use crate::stages::generate_stage::order_wrap_state::OrderCjsCarrierKey;
 use crate::utils;
 use crate::utils::external_import_interop::import_record_needs_interop;
 
+/// One entry in `system_inline_export_stmts`: (insert_position, pairs).
+/// Each pair is (export_names_for_this_binding, local_canonical_name).
+type SystemInlineExportStmt = (usize, Vec<(Vec<CompactStr>, CompactStr)>);
+
 mod hmr;
 mod rename;
 
@@ -129,6 +133,13 @@ pub struct ScopeHoistingFinalizer<'me, 'ast: 'me> {
   /// as the member expression (which knows the property) and once as the bare `import.meta`
   /// object it walks into. The first insert wins, so the property-aware one is kept.
   pub surviving_import_meta_spans: FxIndexMap<Span, EmptyImportMetaKind>,
+  /// For SystemJS: (export_names, local_canonical_name) pairs for HOISTED exports to prepend
+  /// at the TOP of the execute body. For function declarations — hoisted by JS, so the binding
+  /// is available even before its textual position.
+  pub system_hoisted_stmts: Vec<(Vec<CompactStr>, CompactStr)>,
+  /// For SystemJS: (insert_position, pairs) where pairs is a vec of (export_names, local_name).
+  /// For single bindings: pairs has one entry. For destructuring batch: pairs has multiple entries.
+  pub system_inline_export_stmts: Vec<SystemInlineExportStmt>,
 }
 
 impl<'me, 'ast> ScopeHoistingFinalizer<'me, 'ast> {
@@ -556,12 +567,23 @@ impl<'me, 'ast> ScopeHoistingFinalizer<'me, 'ast> {
     let mut canonical_ref = self.ctx.symbol_db.canonical_ref_for(symbol_ref);
     let mut canonical_symbol = self.ctx.symbol_db.get(canonical_ref);
     let namespace_alias = canonical_symbol.namespace_alias.as_ref();
-    if let Some(ns_alias) = namespace_alias {
-      if let Some(expr) = self.try_inline_constant_from_namespace_alias(symbol_ref, ns_alias) {
-        return expr;
+
+    // For SystemJS: external named imports have a local var binding (added to canonical_names
+    // by deconflict_chunk_symbols). Use that directly instead of resolving through namespace alias,
+    // which would produce `ns.prop` instead of the local `var binding$1` assigned by the setter.
+    let skip_namespace_alias = matches!(self.ctx.options.format, OutputFormat::System)
+      && namespace_alias
+        .is_some_and(|ns_alias| self.ctx.modules[ns_alias.namespace_ref.owner].is_external())
+      && self.ctx.chunk.canonical_names.contains_key(&canonical_ref);
+
+    if !skip_namespace_alias {
+      if let Some(ns_alias) = namespace_alias {
+        if let Some(expr) = self.try_inline_constant_from_namespace_alias(symbol_ref, ns_alias) {
+          return expr;
+        }
+        canonical_ref = ns_alias.namespace_ref;
+        canonical_symbol = self.ctx.symbol_db.get(canonical_ref);
       }
-      canonical_ref = ns_alias.namespace_ref;
-      canonical_symbol = self.ctx.symbol_db.get(canonical_ref);
     }
     if let Some(meta) = self.ctx.constant_value_map.get(&canonical_ref) {
       if !self.ctx.options.optimization.is_inline_const_smart_mode()
@@ -618,7 +640,10 @@ impl<'me, 'ast> ScopeHoistingFinalizer<'me, 'ast> {
     };
 
     if let Some(ns_alias) = namespace_alias {
-      if !optimize_namespace_alias_transform {
+      // For SystemJS: skip the namespace alias member-expression wrap when the local binding
+      // has already been assigned through a setter (`module$1 = module.module`). The canonical
+      // name IS the local var, so just use it directly without `.property_name` suffix.
+      if !skip_namespace_alias && !optimize_namespace_alias_transform {
         expr = ast::Expression::new_static_member_expression(
           SPAN,
           expr,
@@ -986,34 +1011,37 @@ impl<'me, 'ast> ScopeHoistingFinalizer<'me, 'ast> {
       },
     ));
 
-    // if there is no export, we should generate `var ns = {}` instead of `var ns = __exportAll({})`
-    // else construct `__exportAll({ prop_name: () => returned, ... })`
-    let module_namespace_rhs =
-      if arg_obj_expr.properties.is_empty() && !self.ctx.options.generated_code.symbols {
-        Expression::ObjectExpression(oxc::allocator::Box::new_in(arg_obj_expr, self))
+    // For SystemJS: build a plain null-proto object with direct values.
+    // For other formats: use __exportAll({ prop: () => value, ... }).
+    let module_namespace_rhs = if matches!(self.ctx.options.format, OutputFormat::System) {
+      self.build_system_namespace_object_expr()
+    } else if arg_obj_expr.properties.is_empty() && !self.ctx.options.generated_code.symbols {
+      // if there is no export, we should generate `var ns = {}` instead of `var ns = __exportAll({})`
+      Expression::ObjectExpression(oxc::allocator::Box::new_in(arg_obj_expr, self))
+    } else {
+      // else construct `__exportAll({ prop_name: () => returned, ... })`
+      let obj_expr = ast::Argument::ObjectExpression(arg_obj_expr.into_in(self.allocator()));
+      let args = if self.ctx.options.generated_code.symbols {
+        oxc::allocator::Vec::from_iter_in([obj_expr], self)
       } else {
-        let obj_expr = ast::Argument::ObjectExpression(arg_obj_expr.into_in(self.allocator()));
-        let args = if self.ctx.options.generated_code.symbols {
-          oxc::allocator::Vec::from_iter_in([obj_expr], self)
-        } else {
-          oxc::allocator::Vec::from_iter_in(
-            [
-              obj_expr,
-              ast::Argument::new_numeric_literal(SPAN, 1.0, None, NumberBase::Decimal, self),
-            ],
-            self,
-          )
-        };
-        ast::Expression::new_call_expression_with_pure(
-          SPAN,
-          self.finalized_expr_for_runtime_symbol("__exportAll"),
-          None,
-          args,
-          false,
-          true,
+        oxc::allocator::Vec::from_iter_in(
+          [
+            obj_expr,
+            ast::Argument::new_numeric_literal(SPAN, 1.0, None, NumberBase::Decimal, self),
+          ],
           self,
         )
       };
+      ast::Expression::new_call_expression_with_pure(
+        SPAN,
+        self.finalized_expr_for_runtime_symbol("__exportAll"),
+        None,
+        args,
+        false,
+        true,
+        self,
+      )
+    };
 
     // construct `var [binding_name_for_namespace_object_ref] = __exportAll(...)`
     let decl_stmt =
@@ -1100,6 +1128,13 @@ impl<'me, 'ast> ScopeHoistingFinalizer<'me, 'ast> {
           });
           re_export_external_stmts = Some(stmts.collect());
         }
+        // SystemJS — emit `ns = _mergeNamespaces(ns, [ext1, ext2, ...])`.
+        OutputFormat::System => {
+          re_export_external_stmts = self.build_system_merge_namespaces_stmt(
+            export_all_externals_rec_ids,
+            binding_name_for_namespace_object_ref,
+          );
+        }
       }
     }
 
@@ -1107,6 +1142,121 @@ impl<'me, 'ast> ScopeHoistingFinalizer<'me, 'ast> {
     ret.extend(re_export_external_stmts.unwrap_or_default());
 
     ret
+  }
+
+  /// Build `{ __proto__: null, prop: value, ... }` for a SystemJS namespace object.
+  /// Uses direct values (not getters) so the object can be mutated by `_mergeNamespaces`.
+  fn build_system_namespace_object_expr(&self) -> Expression<'ast> {
+    // Build a `{ __proto__: null, prop: value, ... }` object for SystemJS.
+    // Uses ObjectExpression::dummy + extend, mirroring the pattern used by
+    // generate_declaration_of_module_namespace_object for the non-System case.
+    let mut obj_expr = ast::ObjectExpression::dummy(self.allocator());
+    // __proto__: void 0  (makes the object null-proto)
+    obj_expr.properties.push(ast::ObjectPropertyKind::new_object_property(
+      SPAN,
+      ast::PropertyKind::Init,
+      ast::PropertyKey::new_static_identifier(SPAN, "__proto__", self),
+      ast::Expression::new_void_0(SPAN, self),
+      false,
+      false,
+      false,
+      self,
+    ));
+    obj_expr.properties.extend(self.ctx.linking_info.canonical_exports(false).filter_map(
+      |(export_name, resolved_export)| {
+        let is_inlinable_constant = self
+          .ctx
+          .constant_value_map
+          .get(&self.ctx.symbol_db.canonical_ref_for(resolved_export.symbol_ref))
+          .is_some_and(|meta| !meta.commonjs_export);
+        if !self.ctx.used_symbol_refs.contains(&resolved_export.symbol_ref)
+          && !is_inlinable_constant
+        {
+          return None;
+        }
+        let (value, _) =
+          self.finalized_expr_for_symbol_ref(resolved_export.symbol_ref, false, false);
+        let computed = export_name == "__proto__";
+        let key = if is_validate_identifier_name(export_name) && export_name != "__proto__" {
+          ast::PropertyKey::StaticIdentifier(
+            IdentifierName::new_id_name(SPAN, export_name, self).into_in(self.allocator()),
+          )
+        } else {
+          ast::PropertyKey::new_string_literal(
+            SPAN,
+            oxc::ast::ast::Str::from_str_in(export_name, self),
+            None,
+            self,
+          )
+        };
+        Some(ast::ObjectPropertyKind::new_object_property(
+          SPAN,
+          ast::PropertyKind::Init,
+          key,
+          value,
+          false,
+          false,
+          computed,
+          self,
+        ))
+      },
+    ));
+    Expression::ObjectExpression(oxc::allocator::Box::new_in(obj_expr, &self.allocator()))
+  }
+
+  /// Build `ns = _mergeNamespaces(ns, [ext1, ext2, ...])` for SystemJS star re-exports.
+  /// Returns `None` when there are no external namespaces to merge.
+  fn build_system_merge_namespaces_stmt(
+    &self,
+    export_all_externals_rec_ids: &[rolldown_common::ImportRecordIdx],
+    binding_name_for_namespace_object_ref: &str,
+  ) -> Option<Vec<ast::Statement<'ast>>> {
+    let ext_ns_names: Vec<_> = export_all_externals_rec_ids
+      .iter()
+      .copied()
+      .filter_map(|idx| {
+        let rec = &self.ctx.module.import_records[idx];
+        let module_idx = rec.resolved_module?;
+        let _ = self.ctx.modules[module_idx].as_external()?;
+        Some(self.canonical_name_for(rec.namespace_ref))
+      })
+      .collect();
+    if ext_ns_names.is_empty() {
+      return None;
+    }
+    let b: &AstBuilder<'ast> = &self.ast_builder;
+    let ns_ref = Expression::new_id_ref_expr(SPAN, binding_name_for_namespace_object_ref, b);
+    let elements = oxc::allocator::Vec::from_iter_in(
+      ext_ns_names
+        .iter()
+        .map(|name| ast::ArrayExpressionElement::from(Expression::new_id_ref_expr(SPAN, name, b))),
+      b,
+    );
+    let ext_array = ast::Argument::from(Expression::new_array_expression(SPAN, elements, b));
+    let merge_call = Expression::new_call_expression(
+      SPAN,
+      Expression::new_id_ref_expr(SPAN, "_mergeNamespaces", b),
+      None,
+      oxc::allocator::Vec::from_iter_in([ast::Argument::from(ns_ref), ext_array], b),
+      false,
+      b,
+    );
+    let reassign = ast::Statement::new_expression_statement(
+      SPAN,
+      ast::Expression::new_assignment_expression(
+        SPAN,
+        ast::AssignmentOperator::Assign,
+        ast::AssignmentTarget::new_assignment_target_identifier(
+          SPAN,
+          oxc::ast::ast::Str::from_str_in(binding_name_for_namespace_object_ref, b),
+          b,
+        ),
+        merge_call,
+        b,
+      ),
+      b,
+    );
+    Some(vec![reassign])
   }
 
   // Handle `import.meta.xxx`, `import.meta['xxx']`, `import.meta?.xxx` and `import.meta?.['xxx']`
@@ -1119,6 +1269,81 @@ impl<'me, 'ast> ScopeHoistingFinalizer<'me, 'ast> {
       let can_polyfill_import_meta_url = self.can_polyfill_import_meta_url();
 
       let property_name = member_expr.static_property_name()?;
+
+      // For SystemJS, rewrite `import.meta.xxx` → `module.meta.xxx`
+      // Exception: ROLLUP_FILE_URL_<refId> uses `new URL(path, module.meta.url).href`
+      if matches!(self.ctx.options.format, rolldown_common::OutputFormat::System) {
+        // `import.meta.ROLLUP_FILE_URL_<refId>` → `new URL('<path>', module.meta.url).href`
+        if property_name.starts_with("ROLLUP_FILE_URL_") {
+          if let Some(reference_id) = property_name.strip_prefix("ROLLUP_FILE_URL_") {
+            let Ok(asset_file_name) = self.ctx.file_emitter.get_file_name(reference_id) else {
+              return None;
+            };
+            let absolute_asset_file_name = asset_file_name
+              .absolutize_with(self.ctx.options.cwd.as_path().join(&self.ctx.options.out_dir));
+            let relative_asset_path = &self.ctx.chunk.relative_path_for(&absolute_asset_file_name);
+            // `module.meta.url`
+            let module_meta_url = ast::Expression::new_static_member_expression(
+              SPAN,
+              ast::Expression::new_static_member_expression(
+                SPAN,
+                Expression::new_id_ref_expr(SPAN, "module", self),
+                IdentifierName::new_id_name(SPAN, "meta", self),
+                false,
+                self,
+              ),
+              IdentifierName::new_id_name(SPAN, "url", self),
+              false,
+              self,
+            );
+            // `new URL(path, module.meta.url).href`
+            let new_url_href = ast::Expression::new_static_member_expression(
+              SPAN,
+              ast::Expression::new_new_expression(
+                SPAN,
+                Expression::new_id_ref_expr(SPAN, "URL", self),
+                None,
+                oxc::allocator::Vec::from_iter_in(
+                  [
+                    ast::Argument::new_string_literal(
+                      SPAN,
+                      oxc::ast::ast::Str::from_str_in(relative_asset_path.as_str(), self),
+                      None,
+                      self,
+                    ),
+                    ast::Argument::from(module_meta_url),
+                  ],
+                  self,
+                ),
+                self,
+              ),
+              IdentifierName::new_id_name(SPAN, "href", self),
+              false,
+              self,
+            );
+            return Some(new_url_href);
+          }
+        }
+
+        // `module.meta`
+        let module_meta = ast::Expression::new_static_member_expression(
+          SPAN,
+          Expression::new_id_ref_expr(SPAN, "module", self),
+          IdentifierName::new_id_name(SPAN, "meta", self),
+          false,
+          self,
+        );
+        // `module.meta.<property>`
+        let rewritten = ast::Expression::new_static_member_expression(
+          original_expr_span,
+          module_meta,
+          IdentifierName::new_id_name(SPAN, property_name, self),
+          false,
+          self,
+        );
+        return Some(rewritten);
+      }
+
       match property_name {
         // Try to polyfill `import.meta.url`
         "url" => {
@@ -2082,7 +2307,8 @@ impl<'me, 'ast> ScopeHoistingFinalizer<'me, 'ast> {
                   rolldown_common::OutputFormat::Esm
                   | rolldown_common::OutputFormat::Iife
                   | rolldown_common::OutputFormat::Umd
-                  | rolldown_common::OutputFormat::Cjs => {
+                  | rolldown_common::OutputFormat::Cjs
+                  | rolldown_common::OutputFormat::System => {
                     // Just remove the statement
                     return;
                   }
@@ -2146,8 +2372,21 @@ impl<'me, 'ast> ScopeHoistingFinalizer<'me, 'ast> {
                 }
               }
 
+              // For SystemJS: wrap the init with exports("default", init) so the runtime
+              // is notified of the default export value.
+              let final_init = if matches!(self.ctx.options.format, OutputFormat::System) {
+                let default_export_names =
+                  self.system_export_names_for_symbol(self.ctx.module.default_export_ref.symbol);
+                if default_export_names.is_empty() {
+                  init_expr
+                } else {
+                  self.build_exports_call(&default_export_names, init_expr)
+                }
+              } else {
+                init_expr
+              };
               top_stmt =
-                Statement::new_var_decl(canonical_name_for_default_export_ref, init_expr, self);
+                Statement::new_var_decl(canonical_name_for_default_export_ref, final_init, self);
             }
             ast::ExportDefaultDeclarationKind::FunctionDeclaration(mut func) => {
               // "export default function() {}" => "function default() {}"
@@ -2242,12 +2481,46 @@ impl<'me, 'ast> ScopeHoistingFinalizer<'me, 'ast> {
             };
           }
         }
+        // For SystemJS: after a class declaration that's exported, emit `exports("Foo", Foo)`
+        // inline (right after the class — classes are NOT hoisted like functions).
+        let system_class_export: Option<(Vec<CompactStr>, CompactStr)> =
+          if matches!(self.ctx.options.format, OutputFormat::System) {
+            if let ast::Statement::ClassDeclaration(class_decl) = &top_stmt {
+              if let Some(class_id) = &class_decl.id {
+                if let Some(symbol_id) = class_id.symbol_id.get() {
+                  let export_names = self.system_export_names_for_symbol(symbol_id);
+                  if export_names.is_empty() {
+                    None
+                  } else {
+                    let symbol_ref: SymbolRef = (self.ctx.idx, symbol_id).into();
+                    let canonical_name = self.canonical_name_for(symbol_ref);
+                    Some((export_names, canonical_name.into()))
+                  }
+                } else {
+                  None
+                }
+              } else {
+                None
+              }
+            } else {
+              None
+            }
+          } else {
+            None
+          };
+
         program.body.push(top_stmt);
+        if let Some((export_names, canonical_name)) = system_class_export {
+          let class_ref = Expression::new_id_ref_expr(SPAN, canonical_name.as_str(), self);
+          let exports_call = self.build_exports_call(&export_names, class_ref);
+          program.body.push(ast::Statement::new_expression_statement(SPAN, exports_call, self));
+        }
         if is_module_decl {
           last_import_stmt_idx = Some(program.body.len());
         }
       },
     );
+
     last_import_stmt_idx.unwrap_or(0)
   }
 
@@ -2382,6 +2655,103 @@ impl<'me, 'ast> ScopeHoistingFinalizer<'me, 'ast> {
           self,
         ),
       );
+    }
+  }
+
+  /// Recursively collect all exported bindings from a destructuring pattern.
+  /// Each entry is (export_name, canonical_local_name).
+  /// Used for `const {a, b} = obj` where `a`, `b` are exported → `exports({a: a, b: b})`.
+  pub fn collect_destructuring_system_exports(
+    &self,
+    pattern: &ast::BindingPattern<'ast>,
+    out: &mut Vec<(CompactStr, CompactStr)>,
+  ) {
+    match pattern {
+      ast::BindingPattern::BindingIdentifier(id) => {
+        if let Some(symbol_id) = id.symbol_id.get() {
+          let export_names = self.system_export_names_for_symbol(symbol_id);
+          if !export_names.is_empty() {
+            let symbol_ref: SymbolRef = (self.ctx.idx, symbol_id).into();
+            let canonical_name = self.canonical_name_for(symbol_ref);
+            for export_name in export_names {
+              out.push((export_name, canonical_name.into()));
+            }
+          }
+        }
+      }
+      ast::BindingPattern::ObjectPattern(obj) => {
+        for prop in &obj.properties {
+          self.collect_destructuring_system_exports(&prop.value, out);
+        }
+        if let Some(rest) = &obj.rest {
+          self.collect_destructuring_system_exports(&rest.argument, out);
+        }
+      }
+      ast::BindingPattern::ArrayPattern(arr) => {
+        for elem in arr.elements.iter().flatten() {
+          self.collect_destructuring_system_exports(elem, out);
+        }
+        if let Some(rest) = &arr.rest {
+          self.collect_destructuring_system_exports(&rest.argument, out);
+        }
+      }
+      ast::BindingPattern::AssignmentPattern(assign) => {
+        self.collect_destructuring_system_exports(&assign.left, out);
+      }
+    }
+  }
+
+  /// Inserts SystemJS inline export statements (e.g. `exports("p", p)` after uninitialized
+  /// declarations) at their target positions in the program body.
+  fn insert_system_inline_export_stmts(
+    &mut self,
+    statements: &mut allocator::Vec<'ast, ast::Statement<'ast>>,
+  ) {
+    // Sort by position descending so earlier insertions don't shift later positions
+    let mut to_insert = std::mem::take(&mut self.system_inline_export_stmts);
+    to_insert.sort_by_key(|entry: &SystemInlineExportStmt| std::cmp::Reverse(entry.0));
+    for (pos, pairs) in to_insert {
+      // Build the export call(s). For a single pair: exports("name", val).
+      // For multiple pairs: exports({ name1: val1, name2: val2 }).
+      let b: &AstBuilder<'ast> = &self.ast_builder;
+      let stmt = if pairs.len() == 1 {
+        let (export_names, local_name) = &pairs[0];
+        let ref_expr = Expression::new_id_ref_expr(SPAN, local_name.as_str(), b);
+        let exports_call = self.build_exports_call(export_names, ref_expr);
+        ast::Statement::new_expression_statement(SPAN, exports_call, b)
+      } else {
+        // Batch form: exports({ name1: local1, name2: local2 })
+        let mut props: oxc::allocator::Vec<'ast, _> = oxc::allocator::Vec::new_in(b);
+        for (export_names, local_name) in &pairs {
+          let key = ast::PropertyKey::StaticIdentifier(
+            IdentifierName::new_id_name(SPAN, export_names[0].as_str(), b).into_in(b.allocator()),
+          );
+          let val = Expression::new_id_ref_expr(SPAN, local_name.as_str(), b);
+          props.push(ast::ObjectPropertyKind::new_object_property(
+            SPAN,
+            ast::PropertyKind::Init,
+            key,
+            val,
+            false,
+            false,
+            false,
+            b,
+          ));
+        }
+        let obj = Expression::new_object_expression(SPAN, props, b);
+        let exports_id = Expression::new_id_ref_expr(SPAN, "exports", b);
+        let call = Expression::new_call_expression(
+          SPAN,
+          exports_id,
+          None,
+          oxc::allocator::Vec::from_iter_in([ast::Argument::from(obj)], b),
+          false,
+          b,
+        );
+        ast::Statement::new_expression_statement(SPAN, call, b)
+      };
+      let clamped = pos.min(statements.len());
+      statements.insert(clamped, stmt);
     }
   }
 
@@ -2620,6 +2990,7 @@ impl<'me, 'ast> ScopeHoistingFinalizer<'me, 'ast> {
     }
   }
 
+  #[expect(clippy::too_many_lines)]
   fn try_rewrite_import_expression(&self, node: &mut ast::Expression<'ast>) -> bool {
     let ast::Expression::ImportExpression(expr) = node else {
       return false;
@@ -2655,6 +3026,13 @@ impl<'me, 'ast> ScopeHoistingFinalizer<'me, 'ast> {
           );
           Expression::new_promise_resolve_then(wrapped, self)
         });
+        return true;
+      }
+      // For SystemJS, non-static dynamic imports like `import(\`./foo-${id}.js\`)` must also
+      // be rewritten to `module.import(...)` so the SystemJS runtime handles the load.
+      if matches!(self.ctx.options.format, OutputFormat::System) {
+        let source = expr.source.take_in(self);
+        *node = self.build_module_import_call(source, expr.span);
         return true;
       }
       return false;
@@ -2759,6 +3137,13 @@ impl<'me, 'ast> ScopeHoistingFinalizer<'me, 'ast> {
           return true;
         }
 
+        // For SystemJS, rewrite `import('./chunk.js')` → `module.import('./chunk.js')`
+        if matches!(self.ctx.options.format, rolldown_common::OutputFormat::System) {
+          let source = expr.source.take_in(self);
+          *node = self.build_module_import_call(source, expr.span);
+          return true;
+        }
+
         needs_to_esm_helper = importee.exports_kind.is_commonjs();
       }
       Module::External(importee) => {
@@ -2776,6 +3161,12 @@ impl<'me, 'ast> ScopeHoistingFinalizer<'me, 'ast> {
             None,
             self,
           );
+        }
+        // For SystemJS, rewrite `import("external")` → `module.import("external")`
+        if matches!(self.ctx.options.format, rolldown_common::OutputFormat::System) {
+          let source = expr.source.take_in(self);
+          *node = self.build_module_import_call(source, expr.span);
+          return true;
         }
         // Convert `import("external")` to `Promise.resolve().then(() => __toESM(require("external")))`
         // when format is CJS and dynamicImportInCjs is false
@@ -2935,6 +3326,230 @@ impl<'me, 'ast> ScopeHoistingFinalizer<'me, 'ast> {
     }
 
     Some(())
+  }
+
+  // =====================================================================
+  // SystemJS live export instrumentation
+  // =====================================================================
+
+  /// Get the SymbolId for an identifier reference (if it refers to a local symbol).
+  fn identifier_ref_symbol_id(&self, id_ref: &ast::IdentifierReference) -> Option<SymbolId> {
+    let ref_id = id_ref.reference_id.get()?;
+    self.scope.scoping().get_reference(ref_id).symbol_id()
+  }
+
+  /// Pre-walk: capture export names for assignment/update targets BEFORE the walk
+  /// clears reference_ids. Called from `visit_expression` BEFORE the main match/walk.
+  ///
+  /// Returns the export names if this expression targets an exported symbol, `None` otherwise.
+  pub fn pre_walk_capture_system_export_names(
+    &self,
+    expr: &ast::Expression<'ast>,
+  ) -> Option<Vec<CompactStr>> {
+    match expr {
+      ast::Expression::AssignmentExpression(assign_expr) => {
+        let ast::AssignmentTarget::AssignmentTargetIdentifier(id_ref) = &assign_expr.left else {
+          return None;
+        };
+        let symbol_id = self.identifier_ref_symbol_id(id_ref)?;
+        let names = self.system_export_names_for_symbol(symbol_id);
+        if names.is_empty() { None } else { Some(names) }
+      }
+      ast::Expression::UpdateExpression(update_expr) => {
+        let ast::SimpleAssignmentTarget::AssignmentTargetIdentifier(id_ref) = &update_expr.argument
+        else {
+          return None;
+        };
+        let symbol_id = self.identifier_ref_symbol_id(id_ref)?;
+        let names = self.system_export_names_for_symbol(symbol_id);
+        if names.is_empty() { None } else { Some(names) }
+      }
+      _ => None,
+    }
+  }
+
+  /// Post-walk: given pre-captured export names, wrap the (already-walked) expression.
+  ///
+  /// Returns `Some(wrapped_expr)` if wrapping should happen.
+  pub fn post_walk_wrap_system_export(
+    &self,
+    expr: &ast::Expression<'ast>,
+    export_names: &[CompactStr],
+  ) -> Option<Expression<'ast>> {
+    match expr {
+      ast::Expression::AssignmentExpression(_) => {
+        // Wrap: `exports("name", assign_expr)` or batch form
+        Some(self.build_exports_call(export_names, expr.clone_in(self.ast_builder.allocator())))
+      }
+      ast::Expression::UpdateExpression(update_expr) => {
+        if update_expr.prefix {
+          // Prefix `++foo` or `--foo`: `exports("name", ++foo)`
+          Some(self.build_exports_call(export_names, expr.clone_in(self.ast_builder.allocator())))
+        } else {
+          // Postfix `foo++` or `foo--`: `exports("name", foo ± 1), foo++`
+          // Get the variable name from the (already-walked) update expression.
+          let var_name = match &update_expr.argument {
+            ast::SimpleAssignmentTarget::AssignmentTargetIdentifier(id_ref) => id_ref.name.as_str(),
+            _ => return None,
+          };
+
+          let is_increment = update_expr.operator == ast::UpdateOperator::Increment;
+          let op = if is_increment {
+            ast::BinaryOperator::Addition
+          } else {
+            ast::BinaryOperator::Subtraction
+          };
+
+          // `foo + 1` or `foo - 1`
+          let b: &AstBuilder<'ast> = &self.ast_builder;
+          let foo_expr = Expression::new_id_ref_expr(SPAN, var_name, b);
+          let one_expr =
+            ast::Expression::new_numeric_literal(SPAN, 1.0, None, NumberBase::Decimal, b);
+          let delta_expr = ast::Expression::new_binary_expression(SPAN, foo_expr, op, one_expr, b);
+
+          let exports_call = self.build_exports_call(export_names, delta_expr);
+          let update_cloned = expr.clone_in(b.allocator());
+
+          // Sequence: `exports("name", foo ± 1), foo++`
+          Some(Expression::new_sequence_expression(
+            SPAN,
+            oxc::allocator::Vec::from_iter_in([exports_call, update_cloned], b),
+            b,
+          ))
+        }
+      }
+      _ => None,
+    }
+  }
+
+  /// For SystemJS format: returns the export name(s) that a local symbol is exported under
+  /// at the **chunk** level.
+  ///
+  /// Returns an empty vec if the symbol is not exported or if the format is not System.
+  ///
+  /// Uses `chunk.exports_to_other_chunks` (the authoritative chunk-level export map) so that
+  /// re-exports with rename — e.g. `export { default as fnOne } from './lib'` where `lib` is
+  /// bundled in the same chunk — are found correctly.  The old approach walked
+  /// `linking_info.resolved_exports` (module-level), which only knows `"default"` → fnOne_ref,
+  /// not the public name `"fnOne"` that the **chunk** exports.
+  ///
+  /// Returns a sorted, deduplicated list of export names.
+  pub fn system_export_names_for_symbol(&self, symbol_id: SymbolId) -> Vec<CompactStr> {
+    if !matches!(self.ctx.options.format, OutputFormat::System) {
+      return vec![];
+    }
+
+    let local_ref: SymbolRef = (self.ctx.idx, symbol_id).into();
+    let canonical_ref = self.ctx.symbol_db.canonical_ref_for(local_ref);
+
+    // Walk the chunk's authoritative export map, canonicalising each key on the fly.
+    // Keys in `exports_to_other_chunks` are not guaranteed to be canonical — some entries are
+    // inserted with `canonical_ref_for(...)`, others with the raw symbol ref — so we must
+    // canonicalise to ensure we find all names for this symbol, including re-exports with rename
+    // (e.g. `export { default as fnOne } from './lib'` where `lib` is in the same chunk).
+    let mut names: Vec<CompactStr> = self
+      .ctx
+      .chunk
+      .exports_to_other_chunks
+      .iter()
+      .filter_map(|(export_ref, alias_list)| {
+        let resolved = self.ctx.symbol_db.canonical_ref_for(*export_ref);
+        if resolved == canonical_ref { Some(alias_list.iter().cloned()) } else { None }
+      })
+      .flatten()
+      .collect();
+
+    names.sort_unstable();
+    names.dedup();
+    names
+  }
+
+  /// Build a `exports("name", value)` or `exports({ a: va, b: vb })` call expression.
+  ///
+  /// - Single name: `exports("name", value_expr)`
+  /// - Multiple names: `exports({ name1: value_expr.clone(), name2: value_expr.clone() })`
+  ///
+  /// `value_expr` is consumed (taken from the caller). When multiple names are present,
+  /// `value_expr` is cloned for each additional name.
+  pub fn build_exports_call(
+    &self,
+    names: &[CompactStr],
+    value_expr: Expression<'ast>,
+  ) -> Expression<'ast> {
+    debug_assert!(!names.is_empty(), "build_exports_call called with empty names");
+
+    let b: &AstBuilder<'ast> = &self.ast_builder;
+    // `exports` identifier
+    let exports_id = Expression::new_id_ref_expr(SPAN, "exports", b);
+
+    if names.len() == 1 {
+      // Single: `exports("name", value)`
+      let name_lit = ast::Expression::new_string_literal(
+        SPAN,
+        oxc::ast::ast::Str::from_str_in(names[0].as_str(), b),
+        None,
+        b,
+      );
+      let args = oxc::allocator::Vec::from_iter_in(
+        [ast::Argument::from(name_lit), ast::Argument::from(value_expr)],
+        b,
+      );
+      Expression::new_call_expression(SPAN, exports_id, None, args, false, b)
+    } else {
+      // Batch: `exports({ name1: value, name2: value })`
+      // All names share the same value. For mutable bindings this means the value
+      // will be the identifier ref (not a cloned expression), since by the time
+      // the setter runs, all names read the same variable.
+      let mut props: oxc::allocator::Vec<'ast, _> = oxc::allocator::Vec::new_in(b);
+      for name in names {
+        let key = ast::PropertyKey::StaticIdentifier(
+          IdentifierName::new_id_name(SPAN, name.as_str(), b).into_in(b.allocator()),
+        );
+        let val = value_expr.clone_in(b.allocator());
+        props.push(ast::ObjectPropertyKind::new_object_property(
+          SPAN,
+          ast::PropertyKind::Init,
+          key,
+          val,
+          false,
+          false,
+          false,
+          b,
+        ));
+      }
+      let obj_expr = Expression::new_object_expression(SPAN, props, b);
+      let args = oxc::allocator::Vec::from_iter_in([ast::Argument::from(obj_expr)], b);
+      Expression::new_call_expression(SPAN, exports_id, None, args, false, b)
+    }
+  }
+
+  /// Build a `module.import(source)` call expression for SystemJS dynamic imports.
+  ///
+  /// SystemJS exposes a `module` factory parameter. Dynamic `import(source)` must be
+  /// rewritten to `module.import(source)` so the SystemJS runtime handles the load.
+  fn build_module_import_call(
+    &self,
+    source: Expression<'ast>,
+    span: oxc::span::Span,
+  ) -> Expression<'ast> {
+    let b: &AstBuilder<'ast> = &self.ast_builder;
+    // `module.import`
+    let callee = ast::Expression::new_static_member_expression(
+      SPAN,
+      Expression::new_id_ref_expr(SPAN, "module", b),
+      IdentifierName::new_id_name(SPAN, "import", b),
+      false,
+      b,
+    );
+    // `module.import(source)`
+    Expression::new_call_expression(
+      span,
+      callee,
+      None,
+      oxc::allocator::Vec::from_iter_in([ast::Argument::from(source)], b),
+      false,
+      b,
+    )
   }
 }
 

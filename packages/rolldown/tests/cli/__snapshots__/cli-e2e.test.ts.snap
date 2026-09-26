@@ -98,6 +98,7 @@ OPTIONS
   --sourcemapFileNames <sourcemapFileNames>Name pattern for emitted sourcemaps.
   --strict <strict>           Whether to always output \`"use strict"\` directive in non-ES module outputs.
   --strictExecutionOrder      Preserve source module execution order across generated chunks.
+  --systemNullSetters         When true (default), side-effect-only deps in SystemJS use null setters instead of function(){}.
   --topLevelVar               Rewrite top-level declarations to use \`var\`.
   --transform.assumptions.ignoreFunctionLength .
   --transform.assumptions.noDocumentAll .
@@ -250,6 +251,7 @@ OPTIONS
   --sourcemapFileNames <sourcemapFileNames>Name pattern for emitted sourcemaps.
   --strict <strict>           Whether to always output \`"use strict"\` directive in non-ES module outputs.
   --strictExecutionOrder      Preserve source module execution order across generated chunks.
+  --systemNullSetters         When true (default), side-effect-only deps in SystemJS use null setters instead of function(){}.
   --topLevelVar               Rewrite top-level declarations to use \`var\`.
   --transform.assumptions.ignoreFunctionLength .
   --transform.assumptions.noDocumentAll .
@@ -402,6 +404,7 @@ OPTIONS
   --sourcemapFileNames <sourcemapFileNames>Name pattern for emitted sourcemaps.
   --strict <strict>           Whether to always output \`"use strict"\` directive in non-ES module outputs.
   --strictExecutionOrder      Preserve source module execution order across generated chunks.
+  --systemNullSetters         When true (default), side-effect-only deps in SystemJS use null setters instead of function(){}.
   --topLevelVar               Rewrite top-level declarations to use \`var\`.
   --transform.assumptions.ignoreFunctionLength .
   --transform.assumptions.noDocumentAll .
@@ -554,6 +557,7 @@ OPTIONS
   --sourcemapFileNames <sourcemapFileNames>Name pattern for emitted sourcemaps.
   --strict <strict>           Whether to always output \`"use strict"\` directive in non-ES module outputs.
   --strictExecutionOrder      Preserve source module execution order across generated chunks.
+  --systemNullSetters         When true (default), side-effect-only deps in SystemJS use null setters instead of function(){}.
   --topLevelVar               Rewrite top-level declarations to use \`var\`.
   --transform.assumptions.ignoreFunctionLength .
   --transform.assumptions.noDocumentAll .
@@ -728,7 +732,7 @@ exports[`cli options for bundling > should handle single string options 1`] = `
 exports[`cli options for bundling > validate cli options 1`] = `
 "Command failed with exit code 1: rolldown index.ts --format INCORRECT
 
-Invalid value for option format: Invalid type: Expected ("es" | "cjs" | "esm" | "module" | "commonjs" | "iife" | "umd") but received "INCORRECT". You can use \`rolldown -h\` to see the help."
+Invalid value for option format: Invalid type: Expected ("es" | "cjs" | "esm" | "module" | "commonjs" | "iife" | "umd" | "system") but received "INCORRECT". You can use \`rolldown -h\` to see the help."
 `;
 
 exports[`config > should allow loading cts config 1`] = `

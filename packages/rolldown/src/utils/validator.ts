@@ -24,10 +24,13 @@ import type {
 } from '../options/input-options.ts';
 import type {
   AddonFunction,
-  CodeSplittingNameFunction,
-  CodeSplittingTestFunction,
   AssetFileNamesFunction,
   ChunkFileNamesFunction,
+  CodeSplittingNameFunction,
+  CodeSplittingOptions,
+  CodeSplittingTestFunction,
+  GeneratedCodeOptions,
+  GeneratedCodePreset,
   GlobalsFunction,
   ManualChunksFunction,
   ManglePropertiesOptions,
@@ -37,9 +40,6 @@ import type {
   SanitizeFileNameFunction,
   MinifyOptions,
   ModuleFormat,
-  CodeSplittingOptions,
-  GeneratedCodePreset,
-  GeneratedCodeOptions,
 } from '../options/output-options.ts';
 import type { RolldownOutputPluginOption, RolldownPluginOption } from '../plugin/index.ts';
 import type { SourcemapIgnoreListOption, SourcemapPathTransformOption } from '../types/misc.ts';
@@ -773,6 +773,7 @@ const ModuleFormatSchema = v.union([
   v.literal('commonjs'),
   v.literal('iife'),
   v.literal('umd'),
+  v.literal('system'),
 ]);
 isTypeTrue<IsSchemaSubType<typeof ModuleFormatSchema, ModuleFormat>>();
 
@@ -1028,6 +1029,12 @@ const OutputOptionsSchema = v.strictObject({
   strict: v.pipe(
     v.optional(v.union([v.boolean(), v.literal('auto')])),
     v.description('Whether to always output `"use strict"` directive in non-ES module outputs.'),
+  ),
+  systemNullSetters: v.pipe(
+    v.optional(v.boolean()),
+    v.description(
+      'When true (default), side-effect-only deps in SystemJS use null setters instead of function(){}.',
+    ),
   ),
 });
 isTypeTrue<IsSchemaSubType<typeof OutputOptionsSchema, OutputOptions>>();

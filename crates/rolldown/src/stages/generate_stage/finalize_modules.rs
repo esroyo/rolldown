@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use rolldown_common::{ConcatenateWrappedModuleKind, PrependRenderedImport, UsedSymbolRefs};
+use rolldown_common::{
+  ConcatenateWrappedModuleKind, ModuleIdx, PrependRenderedImport, UsedSymbolRefs,
+};
 use rolldown_error::{BuildResult, Severity};
 use rolldown_utils::{index_vec_ext::IndexVecExt as _, rayon::ParallelIterator as _};
 use rustc_hash::FxHashMap;
@@ -78,20 +80,31 @@ impl GenerateStage<'_> {
             transferred_import_record,
             rendered_concatenated_wrapped_module_parts,
             module_diagnostics,
+            system_hoisted,
           ) = ctx.finalize_normal_module(ast, ast_scope);
 
           let payload = (!transferred_import_record.is_empty()
             || !matches!(concatenated_wrapped_module_kind, ConcatenateWrappedModuleKind::None))
           .then_some((idx, transferred_import_record, rendered_concatenated_wrapped_module_parts));
-          Some((payload, module_diagnostics))
+          Some((payload, module_diagnostics, idx, system_hoisted))
         })
         .collect::<Vec<_>>()
     });
 
+    // Collect system hoisted exports per module so render_system can batch them.
+    let mut system_hoisted_exports_map: FxHashMap<
+      ModuleIdx,
+      Vec<(Vec<oxc_str::CompactStr>, oxc_str::CompactStr)>,
+    > = FxHashMap::default();
+
     let mut normalized_transfer_parts_rendered_maps = FxHashMap::default();
     let mut diagnostics = vec![];
-    for (payload, module_diagnostics) in finalized {
+    for (payload, module_diagnostics, idx, system_hoisted) in finalized {
       diagnostics.extend(module_diagnostics);
+      // Store hoisted exports for this module (may be empty for non-System or no hoisted exports)
+      if !system_hoisted.is_empty() {
+        system_hoisted_exports_map.insert(idx, system_hoisted);
+      }
       let Some((idx, transferred_import_record, rendered_concatenated_module_parts)) = payload
       else {
         continue;
@@ -105,6 +118,9 @@ impl GenerateStage<'_> {
         .module_idx_to_render_concatenated_module
         .insert(idx, rendered_concatenated_module_parts);
     }
+
+    // Store hoisted exports on the chunk graph so render_system can access them.
+    chunk_graph.system_hoisted_exports_by_module = system_hoisted_exports_map;
 
     let has_error = diagnostics.iter().any(|diagnostic| diagnostic.severity() == Severity::Error);
     self.link_output.diagnostics.extend(diagnostics);

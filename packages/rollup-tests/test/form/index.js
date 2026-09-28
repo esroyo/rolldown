@@ -15,7 +15,7 @@ const {
 } = require('../utils.js');
 
 // const FORMATS = ['amd', 'cjs', 'system', 'es', 'iife', 'umd'];
-const FORMATS = ['es'];
+const FORMATS = ['es', 'system'];
 
 runTestSuiteWithSamples(
 	'form',

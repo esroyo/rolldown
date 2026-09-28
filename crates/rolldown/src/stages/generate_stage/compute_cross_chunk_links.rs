@@ -1415,7 +1415,11 @@ impl GenerateStage<'_> {
           // related to https://github.com/rolldown/rolldown/blob/c100a53c6cfc67b4f92e230da072eef8494862ef/crates/rolldown/src/ecmascript/format/cjs.rs?plain=1#L120-L124
           let import_ref = if self.link_output.module_table[import_ref.owner].is_external() {
             index_chunk_indirect_imports_from_external_modules[chunk_id].insert(import_ref.owner);
-            if matches!(self.options.format, OutputFormat::Esm) {
+            // ESM and System formats handle external imports directly — no `__toESM` cross-chunk
+            // import is needed. For System format, default imports from externals are handled
+            // by the setter mechanism in the System format renderer, not by an inline `__toESM`
+            // call that would require importing the helper from the runtime chunk.
+            if matches!(self.options.format, OutputFormat::Esm | OutputFormat::System) {
               continue;
             }
 
@@ -1456,11 +1460,16 @@ impl GenerateStage<'_> {
           if chunk_id != importee_chunk_idx {
             index_cross_chunk_imports[chunk_id].insert(importee_chunk_idx);
             let imports_from_other_chunks = &mut index_imports_from_other_chunks[chunk_id];
-            imports_from_other_chunks
-              .entry(importee_chunk_idx)
-              .or_default()
-              .push(CrossChunkImportItem { import_ref });
-            index_chunk_exported_symbols[importee_chunk_idx].entry(import_ref).or_default();
+            let items = imports_from_other_chunks.entry(importee_chunk_idx).or_default();
+            // Deduplicate: the same `import_ref` can be pushed more than once when multiple
+            // external modules in this chunk all redirect to the same runtime helper symbol
+            // (e.g. two default imports from externals both need `__toESM`). Duplicate
+            // items would produce dead repeated setter assignments such as
+            // `function(e){e.t,e.t}` in System format output.
+            if !items.iter().any(|item| item.import_ref == import_ref) {
+              items.push(CrossChunkImportItem { import_ref });
+              index_chunk_exported_symbols[importee_chunk_idx].entry(import_ref).or_default();
+            }
           }
         }
 

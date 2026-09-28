@@ -1727,7 +1727,7 @@ export declare class BindingNormalizedOptions {
   get assetFilenames(): string | undefined
   get dir(): string | null
   get file(): string | null
-  get format(): 'es' | 'cjs' | 'iife' | 'umd'
+  get format(): 'es' | 'cjs' | 'iife' | 'umd' | 'system'
   get exports(): 'default' | 'named' | 'none' | 'auto'
   get esModule(): boolean | 'if-default-prop'
   get codeSplitting(): boolean
@@ -2613,7 +2613,7 @@ export interface BindingOutputOptions {
   exports?: 'default' | 'named' | 'none' | 'auto'
   extend?: boolean
   externalLiveBindings?: boolean
-  format?: 'es' | 'cjs' | 'iife' | 'umd'
+  format?: 'es' | 'cjs' | 'iife' | 'umd' | 'system'
   generatedCode?: BindingGeneratedCodeOptions
   globals?: Record<string, string> | ((name: string) => string)
   hashCharacters?: 'base64' | 'base36' | 'hex'
@@ -2635,6 +2635,7 @@ export interface BindingOutputOptions {
   sourcemapPathTransform?: (sources: Array<string>, sourcemapPath: string) => Array<string>
   sourcemapExcludeSources?: boolean
   strict?: boolean | 'auto'
+  systemNullSetters?: boolean
   minify?: boolean | 'dce-only' | MinifyOptions
   manualCodeSplitting?: BindingManualCodeSplittingOptions
   legalComments?: 'none' | 'inline'

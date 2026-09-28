@@ -1282,7 +1282,7 @@ impl GenerateStage<'_> {
       chunk_graph.add_module_to_chunk(
         runtime_idx,
         new_runtime_chunk_idx,
-        self.link_output.metas[runtime_idx].depended_runtime_helper,
+        self.link_output.metas[runtime_idx].chunk_depended_runtime_helper(self.options.format),
       );
       self.clear_module_symbol_chunk_indices(runtime_idx);
       return true;
@@ -1325,7 +1325,7 @@ impl GenerateStage<'_> {
     chunk_graph.add_module_to_chunk(
       runtime_idx,
       runtime_chunk_idx,
-      self.link_output.metas[runtime_idx].depended_runtime_helper,
+      self.link_output.metas[runtime_idx].chunk_depended_runtime_helper(self.options.format),
     );
     self.clear_module_symbol_chunk_indices(runtime_idx);
     true
@@ -1363,15 +1363,16 @@ impl GenerateStage<'_> {
     removed_module_idx: ModuleIdx,
   ) {
     let mut helpers = chunk_graph.chunk_table[chunk_idx].depended_runtime_helper;
-    helpers.remove(self.link_output.metas[removed_module_idx].depended_runtime_helper);
-    helpers.insert(
-      chunk_graph.chunk_table[chunk_idx]
-        .modules
-        .iter()
-        .fold(RuntimeHelper::default(), |helpers, module_idx| {
-          helpers | self.link_output.metas[*module_idx].depended_runtime_helper
-        }),
+    helpers.remove(
+      self.link_output.metas[removed_module_idx].chunk_depended_runtime_helper(self.options.format),
     );
+    helpers.insert(chunk_graph.chunk_table[chunk_idx].modules.iter().fold(
+      RuntimeHelper::default(),
+      |helpers, module_idx| {
+        helpers
+          | self.link_output.metas[*module_idx].chunk_depended_runtime_helper(self.options.format)
+      },
+    ));
     chunk_graph.chunk_table[chunk_idx].depended_runtime_helper = helpers;
   }
 

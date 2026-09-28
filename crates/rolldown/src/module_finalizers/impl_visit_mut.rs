@@ -1,6 +1,6 @@
 use itertools::Itertools;
 use oxc::ast::AstType;
-use oxc::ast::ast::{AssignmentTarget, JSXMemberExpression};
+use oxc::ast::ast::{AssignmentTarget, IdentifierName, JSXMemberExpression};
 use oxc::{
   allocator::{self, GetAllocator, ReplaceWith, TakeIn},
   ast::{
@@ -16,7 +16,8 @@ use rolldown_common::{ConcatenateWrappedModuleKind, SymbolRef, ThisExprReplaceKi
 use rolldown_ecmascript::ToSourceString;
 use rolldown_ecmascript_utils::{
   EsmWrapperBodyKind, EsmWrapperCallKind, EsmWrapperDeclKind, EsmWrapperStmtOptions, ExpressionExt,
-  ExpressionFactoryExt as _, JsxExt, JsxMemberExpressionObjectExt, StatementFactoryExt as _,
+  ExpressionFactoryExt as _, IdentifierNameFactoryExt as _, JsxExt, JsxMemberExpressionObjectExt,
+  StatementFactoryExt as _,
 };
 use rolldown_error::EmptyImportMetaKind;
 
@@ -245,6 +246,11 @@ impl<'ast> VisitJsMut<'ast> for ScopeHoistingFinalizer<'_, 'ast> {
     // Insert keep_name statements for top-level declarations
     self.insert_keep_name_statements(&mut program.body);
     self.keep_name_statement_to_insert.clear();
+
+    // For SystemJS: insert inline export statements (e.g. `exports("p", p)` after `var p;`)
+    if !self.system_inline_export_stmts.is_empty() {
+      self.insert_system_inline_export_stmts(&mut program.body);
+    }
 
     match wrapper_mode {
       ModuleWrapperMode::InteropCjs(wrapper_ref) => {
@@ -481,6 +487,16 @@ impl<'ast> VisitJsMut<'ast> for ScopeHoistingFinalizer<'_, 'ast> {
   }
 
   fn visit_expression(&mut self, expr: &mut ast::Expression<'ast>) {
+    // SystemJS live export instrumentation:
+    // Capture export names for assignment/update targets BEFORE the walk clears reference_ids,
+    // then wrap after the walk.
+    let system_export_wrap: Option<Vec<oxc_str::CompactStr>> =
+      if matches!(self.ctx.options.format, rolldown_common::OutputFormat::System) {
+        self.pre_walk_capture_system_export_names(expr)
+      } else {
+        None
+      };
+
     // Handle keep_names for named class/function expressions in any expression context
     // (return statements, function args, array elements, etc.)
     if self.ctx.options.keep_names && self.ctx.runtime.id() != self.ctx.idx {
@@ -595,8 +611,19 @@ impl<'ast> VisitJsMut<'ast> for ScopeHoistingFinalizer<'_, 'ast> {
       }
       ast::Expression::ImportMeta(import_meta) => {
         if !self.ctx.options.format.keep_esm_import_export_syntax() {
-          self.record_surviving_import_meta(import_meta.span, EmptyImportMetaKind::Plain);
-          *expr = ast::Expression::new_object_expression(SPAN, [], self);
+          // For SystemJS, bare `import.meta` → `module.meta`
+          if matches!(self.ctx.options.format, rolldown_common::OutputFormat::System) {
+            *expr = ast::Expression::new_static_member_expression(
+              import_meta.span,
+              ast::Expression::new_id_ref_expr(SPAN, "module", self),
+              IdentifierName::new_id_name(SPAN, "meta", self),
+              false,
+              self,
+            );
+          } else {
+            self.record_surviving_import_meta(import_meta.span, EmptyImportMetaKind::Plain);
+            *expr = ast::Expression::new_object_expression(SPAN, [], self);
+          }
         }
       }
       ast::Expression::ChainExpression(_) => {
@@ -677,6 +704,13 @@ impl<'ast> VisitJsMut<'ast> for ScopeHoistingFinalizer<'_, 'ast> {
     self.rewrite_import_meta_hot(expr);
 
     walk_js_mut::walk_expression(self, expr);
+
+    // Apply SystemJS live export wrapping (post-walk, using pre-captured names)
+    if let Some(export_names) = system_export_wrap {
+      if let Some(wrapped) = self.post_walk_wrap_system_export(expr, &export_names) {
+        *expr = wrapped;
+      }
+    }
   }
 
   fn visit_jsx_element_name(&mut self, it: &mut ast::JSXElementName<'ast>) {
@@ -861,12 +895,65 @@ impl<'ast> VisitJsMut<'ast> for ScopeHoistingFinalizer<'_, 'ast> {
     // keep_name transformation
     match it {
       ast::Declaration::VariableDeclaration(decl) => {
+        // For SystemJS destructuring declarations, collect exported bindings
+        // and emit a batch exports({a: a, b: b}) after the entire declaration.
+        if matches!(self.ctx.options.format, rolldown_common::OutputFormat::System) {
+          let mut batch_exports: Vec<(CompactStr, CompactStr)> = vec![]; // (export_name, local_name)
+          for d in &decl.declarations {
+            // Only collect from ObjectPattern/ArrayPattern — BindingIdentifier is handled individually
+            if !matches!(d.id, ast::BindingPattern::BindingIdentifier(_)) {
+              self.collect_destructuring_system_exports(&d.id, &mut batch_exports);
+            }
+          }
+          let insert_pos = self.cur_stmt_index + 1;
+          if !batch_exports.is_empty() {
+            let pairs: Vec<(Vec<CompactStr>, CompactStr)> = batch_exports
+              .into_iter()
+              .map(|(export_name, local_name)| (vec![export_name], local_name))
+              .collect();
+            self.system_inline_export_stmts.push((insert_pos, pairs));
+          }
+        }
+
         for decl in &mut decl.declarations {
-          let (BindingPattern::BindingIdentifier(id), Some(init)) = (&decl.id, decl.init.as_mut())
-          else {
-            continue;
-          };
-          self.process_keep_name_for_expression(id.symbol_id.get().map(KeepNameId::SymbolId), init);
+          let BindingPattern::BindingIdentifier(id) = &decl.id else { continue };
+
+          if let Some(init) = decl.init.as_mut() {
+            self
+              .process_keep_name_for_expression(id.symbol_id.get().map(KeepNameId::SymbolId), init);
+
+            // For SystemJS, wrap the initializer of exported vars with exports("name", init)
+            // `export let x = 10` → (after export removal) `let x = exports("x", 10)`
+            // This must run before walk so the wrapped expr is what the inner walk sees.
+            if matches!(self.ctx.options.format, rolldown_common::OutputFormat::System) {
+              if let Some(symbol_id) = id.symbol_id.get() {
+                let export_names = self.system_export_names_for_symbol(symbol_id);
+                if !export_names.is_empty() {
+                  let current_init = init.take_in(self);
+                  *init = self.build_exports_call(&export_names, current_init);
+                }
+              }
+            }
+          } else if matches!(self.ctx.options.format, rolldown_common::OutputFormat::System) {
+            // Uninitialized export: `export var p;`
+            // Emit `exports("p", p)` after the declaration.
+            // The value is `undefined` (uninitialized), per Rollup: `var p; exports("p", p);`
+            if let Some(symbol_id) = id.symbol_id.get() {
+              let export_names = self.system_export_names_for_symbol(symbol_id);
+              if !export_names.is_empty() {
+                let symbol_ref: rolldown_common::SymbolRef = (self.ctx.idx, symbol_id).into();
+                let canonical_name = self.canonical_name_for(symbol_ref);
+                let p_ref = Expression::new_id_ref_expr(SPAN, canonical_name, self);
+                // Collect to be inserted after this declaration (not hoisted)
+                // Insert after the current declaration (cur_stmt_index + 1)
+                let _ = p_ref; // data stored by name, statement built lazily
+                let insert_pos = self.cur_stmt_index + 1;
+                self
+                  .system_inline_export_stmts
+                  .push((insert_pos, vec![(export_names, canonical_name.into())]));
+              }
+            }
+          }
         }
       }
       ast::Declaration::FunctionDeclaration(decl) => {
@@ -876,6 +963,24 @@ impl<'ast> VisitJsMut<'ast> for ScopeHoistingFinalizer<'_, 'ast> {
           self.process_fn(keep_name_id, keep_name_id)
         {
           self.keep_name_statement_to_insert.push((insert_position, original_name, new_name));
+        }
+
+        // For SystemJS: a plain `function fnOne() {}` that is re-exported from this chunk
+        // (possibly under a different name via `export { fnOne as alias }` in an importing
+        // module) must emit a hoisted `exports("alias", fnOne)` at the top of execute.
+        // This mirrors the handling of `export function foo()` in remove_unused_top_level_stmt
+        // but covers the case where the `export` keyword is on a different statement or module.
+        if matches!(self.ctx.options.format, rolldown_common::OutputFormat::System) {
+          if let Some(func_id) = &decl.id {
+            if let Some(symbol_id) = func_id.symbol_id.get() {
+              let export_names = self.system_export_names_for_symbol(symbol_id);
+              if !export_names.is_empty() {
+                let symbol_ref: rolldown_common::SymbolRef = (self.ctx.idx, symbol_id).into();
+                let canonical_name = self.canonical_name_for(symbol_ref);
+                self.system_hoisted_stmts.push((export_names, canonical_name.into()));
+              }
+            }
+          }
         }
       }
       ast::Declaration::ClassDeclaration(decl) => {

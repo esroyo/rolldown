@@ -96,6 +96,18 @@ pub struct LinkingMetadata {
   /// also need to link the exported facade symbol.
   pub included_commonjs_export_symbol: FxHashSet<SymbolRef>,
   pub depended_runtime_helper: RuntimeHelper,
+  /// Snapshot of `depended_runtime_helper` as it stood after the tree-shaking
+  /// inclusion pass normalized it from per-statement bits — i.e. **before**
+  /// `patch_module_dependencies` OR-assigns inherited bits from eliminated
+  /// dependencies. Only the bits set here were demanded by this module's own
+  /// included statements.
+  ///
+  /// Used by the code-splitter to populate `chunk.depended_runtime_helper`
+  /// with only the helpers genuinely emitted by the chunk's rendered code,
+  /// preventing spurious cross-chunk runtime imports in formats where helpers
+  /// from inherited bits are never called inline (e.g. System format's dead
+  /// `function(e){e.t,e.t,e.t}` setter pattern).
+  pub own_depended_runtime_helper: RuntimeHelper,
   /// Whether this module needs the runtime chunk loaded for its side effects.
   /// Set when the runtime module has side effects (e.g. dev/HMR mode).
   pub has_side_effectful_runtime_dep: bool,
@@ -122,6 +134,22 @@ impl LinkingMetadata {
         (needs_commonjs_export || !came_from_cjs).then_some((name, &self.resolved_exports[name]))
       },
     )
+  }
+
+  /// Returns the `depended_runtime_helper` bits that should be attributed to
+  /// this module's chunk. For System format, only helpers demanded by the
+  /// module's own included statements (`own_depended_runtime_helper`) are
+  /// returned — inherited bits from eliminated dependencies would produce
+  /// dead setters. For all other formats the full `depended_runtime_helper`
+  /// is returned (CJS/IIFE/UMD may inline helpers inherited from eliminated
+  /// dependencies via `patch_module_dependencies` propagation).
+  #[inline]
+  pub fn chunk_depended_runtime_helper(&self, format: OutputFormat) -> RuntimeHelper {
+    if matches!(format, OutputFormat::System) {
+      self.own_depended_runtime_helper
+    } else {
+      self.depended_runtime_helper
+    }
   }
 
   pub fn is_canonical_exports_empty(&self) -> bool {
@@ -158,7 +186,7 @@ impl LinkingMetadata {
         !rec_meta.contains(ImportRecordMeta::EntryLevelExternal)
           || self.module_namespace_included_reason.contains(ModuleNamespaceIncludedReason::Unknown)
       }
-      OutputFormat::Cjs | OutputFormat::Iife | OutputFormat::Umd => true,
+      OutputFormat::Cjs | OutputFormat::Iife | OutputFormat::Umd | OutputFormat::System => true,
     }
   }
 

@@ -5,10 +5,18 @@ use rolldown_common::{
   UsedSymbolRefs, WrapKind,
 };
 
+/// Fields returned by the module finalizer after visiting.
+/// - `0`: transferred_import_record
+/// - `1`: rendered_concatenated_wrapped_module_parts
+/// - `2`: diagnostics
+/// - `3`: For SystemJS format: `(export_names, local_canonical_name)` pairs for hoisted
+///   function-declaration exports. Returned to the renderer so they can be batched into
+///   a single `exports({...})` call at the top of execute.
 pub type FinalizerMutableFields = (
   FxIndexMap<ImportRecordIdx, String>, // transferred_import_record
   RenderedConcatenatedModuleParts,     // rendered_concatenated_wrapped_module_parts
   Vec<BuildDiagnostic>,                // diagnostics
+  Vec<(Vec<oxc_str::CompactStr>, oxc_str::CompactStr)>, // system_hoisted_stmts
 );
 
 use oxc::ast::builder::AstBuilder;
@@ -152,6 +160,8 @@ impl<'me> ScopeHoistingFinalizerContext<'me> {
         missing_file_reference_ids: FxIndexMap::default(),
         resolve_file_url_errors: Vec::new(),
         surviving_import_meta_spans: FxIndexMap::default(),
+        system_hoisted_stmts: vec![],
+        system_inline_export_stmts: vec![],
       };
       finalizer.visit_program(oxc_program);
 
@@ -202,6 +212,7 @@ impl<'me> ScopeHoistingFinalizerContext<'me> {
         finalizer.transferred_import_record,
         finalizer.rendered_concatenated_wrapped_module_parts,
         diagnostics,
+        finalizer.system_hoisted_stmts,
       )
     })
   }

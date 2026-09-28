@@ -426,3 +426,6 @@
  - rollup@sourcemaps@warning-with-coarse-sourcemap: get correct mapping location with coarse sourcemap@generates es (`THIS_IS_UNDEFINED` warning)
  - rollup@function@export-default-this-without-semicolon: adds the missing semicolon after a default export of a rewritten top-level "this" without a trailing semicolon (`THIS_IS_UNDEFINED` warning)
  - rollup@function@circular-namespace-reexport-cache: handles cyclic reexports through cached namespace reexports for multiple importers (`CYCLIC_CROSS_CHUNK_REEXPORT` warning)
+
+### The `output.format` systemjs is not fully supported
+ - rollup@form@system-export-rendering-compact: Renders updates of exported variables for SystemJS output in compact mode

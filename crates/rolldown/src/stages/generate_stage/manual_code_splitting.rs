@@ -527,7 +527,7 @@ impl ManualSplitter<'_> {
       self.chunk_graph.add_module_to_chunk(
         module_idx,
         chunk_idx,
-        self.link_output.metas[module_idx].depended_runtime_helper,
+        self.link_output.metas[module_idx].chunk_depended_runtime_helper(self.options.format),
       );
       self.module_to_assigned.set_bit(module_idx);
     });

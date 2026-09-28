@@ -156,7 +156,7 @@ impl GenerateStage<'_> {
         chunk_graph.add_module_to_chunk(
           module.idx,
           chunk_idx,
-          self.link_output.metas[module.idx].depended_runtime_helper,
+          self.link_output.metas[module.idx].chunk_depended_runtime_helper(self.options.format),
         );
         // bits_to_chunk.insert(bits, chunk); // This line is intentionally commented out because `bits_to_chunk` is not used in this loop. It is updated elsewhere in the `init_entry_point` and `split_chunks` methods.
         chunk_graph.entry_module_to_entry_chunk.entry(module.idx).or_insert(chunk_idx);
@@ -1037,7 +1037,8 @@ impl GenerateStage<'_> {
         chunk_graph.add_module_to_chunk(
           normal_module.idx,
           chunk_id,
-          self.link_output.metas[normal_module.idx].depended_runtime_helper,
+          self.link_output.metas[normal_module.idx]
+            .chunk_depended_runtime_helper(self.options.format),
         );
         if allow_merge_common_chunks {
           temp_chunk_graph.add_module_to_chunk(
@@ -1063,7 +1064,8 @@ impl GenerateStage<'_> {
         chunk_graph.add_module_to_chunk(
           normal_module.idx,
           chunk_id,
-          self.link_output.metas[normal_module.idx].depended_runtime_helper,
+          self.link_output.metas[normal_module.idx]
+            .chunk_depended_runtime_helper(self.options.format),
         );
         bits_to_chunk.insert(bits.clone(), chunk_id);
       }
@@ -1135,7 +1137,7 @@ impl GenerateStage<'_> {
     chunk_graph.add_module_to_chunk(
       runtime_module_idx,
       runtime_chunk_idx,
-      self.link_output.metas[runtime_module_idx].depended_runtime_helper,
+      self.link_output.metas[runtime_module_idx].chunk_depended_runtime_helper(self.options.format),
     );
     module_is_assigned.set_bit(runtime_module_idx);
     Some(runtime_chunk_idx)

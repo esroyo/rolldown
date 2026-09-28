@@ -526,7 +526,7 @@ impl GenerateStage<'_> {
       chunk_graph.add_module_to_chunk(
         module_idx,
         target_chunk_idx,
-        self.link_output.metas[module_idx].depended_runtime_helper,
+        self.link_output.metas[module_idx].chunk_depended_runtime_helper(self.options.format),
       );
     }
   }
@@ -552,7 +552,7 @@ impl GenerateStage<'_> {
       chunk_graph.add_module_to_chunk(
         module_idx,
         chunk_id,
-        self.link_output.metas[module_idx].depended_runtime_helper,
+        self.link_output.metas[module_idx].chunk_depended_runtime_helper(self.options.format),
       );
     }
     bits_to_chunk.insert(bits.clone(), chunk_id);
@@ -1208,7 +1208,7 @@ impl GenerateStage<'_> {
     chunk_graph.add_module_to_chunk(
       runtime_module_idx,
       target_chunk_idx,
-      self.link_output.metas[runtime_module_idx].depended_runtime_helper,
+      self.link_output.metas[runtime_module_idx].chunk_depended_runtime_helper(self.options.format),
     );
     let target_chunk = &mut chunk_graph.chunk_table[target_chunk_idx];
     target_chunk.depended_runtime_helper.insert(runtime_chunk_helpers);
